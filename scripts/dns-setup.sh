@@ -34,6 +34,7 @@ ${IP} s3.${DOMAIN}
 ${IP} monitor.${DOMAIN}
 ${IP} mail.${DOMAIN}
 ${IP} ai.${DOMAIN}
+${IP} apps.${DOMAIN}
 ${MARKER_END}
 EOF
 
@@ -46,3 +47,4 @@ echo "  → https://monitor.${DOMAIN} (Grafana)"
 echo "  → https://mail.${DOMAIN} (Stalwart)"
 echo "  → https://ai.${DOMAIN} (Open WebUI)"
 echo "  → https://traefik.${DOMAIN} (Traefik dashboard)"
+echo "  → https://apps.${DOMAIN} (Apps demo site)"

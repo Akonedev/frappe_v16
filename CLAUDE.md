@@ -89,7 +89,7 @@ Infra:
 | DB sites | MariaDB 10.6 | Seule option supportée par Press |
 | Garage keys | Format GKxxxx | Généré par Garage (pas configurable) |
 | Press Dashboard | Vue SPA buildé | Build host → `apps/press/press/www/dashboard.html` |
-| App Sources | Forgejo (git.press.local) | 23 apps mirrorées depuis GitHub |
+| App Sources | Forgejo (git.press.local) | 24 apps mirrorées depuis GitHub |
 | TLS local | mkcert (scripts/setup-mkcert.sh) | Certs de confiance *.press.local |
 
 ## Press Dashboard (Vue SPA)
@@ -110,26 +110,53 @@ docker cp /tmp/fake_bench/apps/press/press/public/dashboard/. \
   presse_claude_press:/home/frappe/frappe-bench/sites/assets/press/dashboard/
 ```
 
-## Apps Frappe (Tasks 16 + 22 + 24-29)
+## Apps Frappe (Tasks 16 + 22 + 24-30)
 
-23 App Sources configurés dans Press (23 apps dans le bench), tous pointant vers Forgejo local:
+24 App Sources dans le bench, tous pointant vers Forgejo local:
 - **Starter** (gratuit): frappe, crm, helpdesk, lms, wiki, gameplan, builder, print_designer, payments
 - **Pro** ($25/mo): + erpnext, hrms, drive, raven
 - **Enterprise** ($99/mo): + insights
 - **Mail** (Task 22): + mail (branch develop, requiert Python ≥3.14 — non installable avec Python 3.12)
 - **Phase 4** (Tasks 24-26): education, hospitality, lending, non_profit, webshop, meeting, llm
 - **Phase 5** (Task 29): + frappe_whatsapp (community, branch master)
+- **Dépendance helpdesk**: telephony (branch develop, mirroré depuis frappe/telephony)
 
 **Forgejo mirrors** (sync auto depuis GitHub):
 ```bash
-http://git.press.local/frappe/<app_name>   # toutes les 23 apps
+http://git.press.local/frappe/<app_name>   # toutes les 24 apps dont telephony
 http://git.press.local/The-Commit-Company/raven
 ```
 
-**Apps bench server** (23 total):
+**Apps bench server** (24 total):
 builder, crm, drive, education, erpnext, frappe, frappe_whatsapp, gameplan,
 helpdesk, hospitality, hrms, insights, lending, llm, lms, mail, meeting,
-non_profit, payments, print_designer, raven, webshop, wiki
+non_profit, payments, print_designer, raven, telephony, webshop, wiki
+
+## Site apps.press.local (Task 30)
+
+Site Frappe de démonstration avec toutes les apps principales installées:
+- **URL**: `https://apps.press.local:14002/desk`
+- **Apps installées (15)**: frappe, payments, erpnext, hrms, crm, telephony, helpdesk, lms,
+  drive, wiki, gameplan, builder, print_designer, raven, insights
+- **DB**: `_d3a079634a5614ed` sur presse_claude_mariadb
+- **Bench**: `bench-0001-000001-presse_claude_server`
+
+**DNS requis** (ajouter manuellement si `make dns` non exécuté):
+```bash
+echo '127.0.0.1 apps.press.local' | sudo tee -a /etc/hosts
+```
+
+**Redémarrer gunicorn bench après pip install de nouvelles apps:**
+```bash
+# Dans le server container:
+pkill -f 'gunicorn.*8001' || true
+BENCH=/home/frappe/benches/bench-0001-000001-presse_claude_server
+nohup sudo -u frappe env HOME=/home/frappe \
+  $BENCH/env/bin/gunicorn \
+  --bind 0.0.0.0:8001 --workers 2 --worker-class=gthread --threads=4 \
+  --timeout 120 --chdir $BENCH/sites frappe.app:application \
+  >> /tmp/bench-bench-0001-000001-presse_claude_server.log 2>&1 &
+```
 
 ## TLS local (Task 27)
 
@@ -178,3 +205,4 @@ client1.press.local  → Active, HTTP 200
 | `https://git.press.local:14002` | Forgejo | gitadmin / presse_admin_2024 |
 | `https://monitor.press.local:14002` | Grafana | admin / admin |
 | `https://ai.press.local:14002` | Open WebUI | — |
+| `https://apps.press.local:14002/desk` | Site apps démo (15 apps) | Administrator / presse_admin_2024 |
