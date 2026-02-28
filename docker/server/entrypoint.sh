@@ -251,6 +251,93 @@ RQ_PID=$!
 echo "==> RQ worker PID: ${RQ_PID} (logs: /tmp/rq-worker.log)"
 cd /
 
+# ── Patcher frappe socket.io pour Docker (utils.js + authenticate.js) ────────
+# Problème : en developer_mode, get_url() construit une URL externe inaccessible.
+# Fix : utiliser http://127.0.0.1:8001 (gunicorn interne) avec node:http.request
+# qui permet d'override le Host header (contrairement à fetch/undici).
+for bench_dir in "${BENCHES_DIR}"/bench-*/; do
+  FRAPPE_REALTIME="${bench_dir}apps/frappe/realtime"
+  if [ ! -d "${FRAPPE_REALTIME}" ]; then continue; fi
+
+  # Patch utils.js : utiliser gunicorn interne
+  python3 - "${FRAPPE_REALTIME}/utils.js" <<'PYEOF'
+import sys
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+if '127.0.0.1' in content:
+    print(f"==> {path} déjà patché")
+    sys.exit(0)
+new_content = '''const { get_conf } = require("../node_utils");
+const conf = get_conf();
+
+// Patch Docker: socket.io calls gunicorn directly on localhost:8001.
+// get_url returns internal URL; authenticate.js uses node:http.request to set Host header.
+function get_url(socket, path) {
+\tif (!path) path = "";
+\treturn "http://127.0.0.1:8001" + path;
+}
+
+module.exports = { get_url };
+'''
+with open(path, 'w') as f:
+    f.write(new_content)
+print(f"==> {path} patché (Docker: gunicorn interne)")
+PYEOF
+
+  # Patch authenticate.js : utiliser node:http.request avec Host header
+  python3 - "${FRAPPE_REALTIME}/middlewares/authenticate.js" <<'PYEOF'
+import sys
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+if 'node:http' in content:
+    print(f"==> {path} déjà patché")
+    sys.exit(0)
+# Ajouter require http et remplacer fetch par http.request
+content = content.replace(
+    'const cookie = require("cookie");',
+    'const cookie = require("cookie");\nconst http = require("node:http");'
+)
+old_headers = 'let headers = {};'
+new_headers_plus = '''let headers = {};
+\t\t// node:http.request permet d'override Host header (fetch/undici ne le permet pas)
+\t\theaders["Host"] = get_site_name(socket);'''
+content = content.replace(old_headers, new_headers_plus, 1)
+# Remplacer le bloc fetch par http.request
+old_fetch = '''\t\treturn fetch(get_url(socket, path), {
+\t\t\t...opts,
+\t\t\theaders,
+\t\t});'''
+new_http = '''\t\tconst url = get_url(socket, path);
+\t\treturn new Promise((resolve, reject) => {
+\t\t\tconst req = http.request(url, { headers, method: opts.method || "GET" }, (res) => {
+\t\t\t\tlet data = "";
+\t\t\t\tres.on("data", (chunk) => (data += chunk));
+\t\t\t\tres.on("end", () => {
+\t\t\t\t\tresolve({
+\t\t\t\t\t\tjson: () => {
+\t\t\t\t\t\t\ttry { return Promise.resolve(JSON.parse(data)); }
+\t\t\t\t\t\t\tcatch (e) { return Promise.reject(new SyntaxError("Not valid JSON: " + data.substring(0, 80))); }
+\t\t\t\t\t\t},
+\t\t\t\t\t\tstatus: res.statusCode,
+\t\t\t\t\t\tok: res.statusCode >= 200 && res.statusCode < 300,
+\t\t\t\t\t});
+\t\t\t\t});
+\t\t\t});
+\t\t\treq.on("error", reject);
+\t\t\treq.end();
+\t\t});'''
+content = content.replace(old_fetch, new_http)
+if 'node:http' in content and 'http.request' in content:
+    with open(path, 'w') as f:
+        f.write(content)
+    print(f"==> {path} patché (Docker: node:http.request)")
+else:
+    print(f"==> AVERTISSEMENT: patch {path} incomplet (version frappe différente?)")
+PYEOF
+done
+
 # ── Démarrer les gunicorn pour les benches existants ─────────────────────────
 BENCHES_DIR="/home/frappe/benches"
 BENCH_PORT=8001
@@ -277,6 +364,20 @@ for BENCH_DIR in "${BENCHES_DIR}"/bench-*/; do
       frappe.app:application \
       > "/tmp/bench-${BENCH_NAME}.log" 2>&1 &
     echo "==> bench ${BENCH_NAME} gunicorn PID: $!"
+
+    # ── Démarrer socket.io pour ce bench ──────────────────────────────────────
+    SOCKETIO_JS="${BENCH_DIR}apps/frappe/socketio.js"
+    if [ -f "${SOCKETIO_JS}" ]; then
+      echo "==> Démarrage socket.io pour bench: ${BENCH_NAME}"
+      (
+        cd "${BENCH_DIR}apps/frappe"
+        sudo -u frappe env HOME="/home/frappe" \
+          node socketio.js \
+          >> "/tmp/socketio-${BENCH_NAME}.log" 2>&1
+      ) &
+      echo "==> socket.io PID: $!"
+    fi
+
     BENCH_PORT=$((BENCH_PORT + 1))
   fi
 done
