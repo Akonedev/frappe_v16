@@ -1,0 +1,42 @@
+# Tier 2 — DevTools: Garage v1.0.0 (S3 storage)
+# Remplace MinIO/AWS S3 — stocker backups et uploads Press
+
+[Unit]
+Description=Presse Claude — Garage S3 Storage
+After=network-online.target presse-claude-network.service
+Wants=network-online.target
+Requires=presse-claude-network.service
+
+[Container]
+Image=docker.io/dxflrs/garage:v1.0.0
+ContainerName=presse_claude_garage
+
+Network=presse-claude.network
+
+Volume=%h/Documents/Dev/01_Enccours/Presse_claude/config/garage/garage.toml:/etc/garage.toml:ro
+Volume=presse-claude-garage-data.volume:/var/lib/garage/data
+Volume=presse-claude-garage-meta.volume:/var/lib/garage/meta
+
+PublishPort=127.0.0.1:14040:3900
+PublishPort=127.0.0.1:14041:3902
+
+Label=traefik.enable=true
+Label=traefik.http.routers.garage-s3.rule=Host(`s3.press.local`)
+Label=traefik.http.routers.garage-s3.entrypoints=websecure
+Label=traefik.http.routers.garage-s3.tls=true
+Label=traefik.http.services.garage-s3.loadbalancer.server.port=3900
+Label=com.docker.compose.project=presse_claude
+
+HealthCmd=CMD /garage status
+HealthInterval=15s
+HealthTimeout=10s
+HealthRetries=5
+HealthStartPeriod=10s
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=60
+
+[Install]
+WantedBy=presse-claude-devtools.target

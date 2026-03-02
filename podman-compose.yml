@@ -1,0 +1,536 @@
+# podman-compose.yml — Presse Claude: SaaS Platform (Podman)
+# Fichier unifié (podman-compose ne supporte pas include:)
+# Utiliser: podman-compose --env-file .env up -d
+
+networks:
+  default:
+    name: ${PREFIX}network
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
+
+volumes:
+  # Infra
+  mariadb_data:
+    name: ${PREFIX}mariadb_data
+  redis_cache_data:
+    name: ${PREFIX}redis_cache_data
+  redis_queue_data:
+    name: ${PREFIX}redis_queue_data
+  # Press
+  press_home:
+    name: ${PREFIX}press_home
+  # Server
+  server_home:
+    name: ${PREFIX}server_home
+  server_benches:
+    name: ${PREFIX}server_benches
+  # Garage S3
+  garage_data:
+    name: ${PREFIX}garage_data
+  garage_meta:
+    name: ${PREFIX}garage_meta
+  # Forgejo
+  forgejo_data:
+    name: ${PREFIX}forgejo_data
+  forgejo_repos:
+    name: ${PREFIX}forgejo_repos
+  # Stalwart
+  stalwart_data:
+    name: ${PREFIX}stalwart_data
+  # Monitoring
+  prometheus_data:
+    name: ${PREFIX}prometheus_data
+  grafana_data:
+    name: ${PREFIX}grafana_data
+  loki_data:
+    name: ${PREFIX}loki_data
+  # AI
+  ollama_data:
+    name: ${PREFIX}ollama_data
+  openwebui_data:
+    name: ${PREFIX}openwebui_data
+
+services:
+
+  # ── INFRA ──────────────────────────────────────────────────────────────────
+
+  mariadb:
+    image: docker.io/library/mariadb:10.6
+    container_name: ${PREFIX}mariadb
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MARIADB_PRESS_DB}
+      MYSQL_USER: ${MARIADB_PRESS_USER}
+      MYSQL_PASSWORD: ${MARIADB_PRESS_PASSWORD}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    ports:
+      - "127.0.0.1:${PORT_MARIADB}:3306"
+    networks:
+      - default
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --skip-character-set-client-handshake
+      --innodb-buffer-pool-size=256M
+      --max-connections=150
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MARIADB_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  mysqld-exporter:
+    image: docker.io/prom/mysqld-exporter:v0.15.1
+    container_name: ${PREFIX}mysqld_exporter
+    restart: unless-stopped
+    networks:
+      - default
+    environment:
+      DATA_SOURCE_NAME: "root:${MARIADB_ROOT_PASSWORD}@tcp(${PREFIX}mariadb:3306)/"
+    command:
+      - "--collect.global_status"
+      - "--collect.info_schema.innodb_metrics"
+      - "--collect.auto_increment.columns"
+      - "--collect.info_schema.processlist"
+      - "--collect.binlog_size"
+      - "--collect.info_schema.tablestats"
+      - "--collect.global_variables"
+      - "--collect.info_schema.query_response_time"
+      - "--collect.info_schema.userstats"
+      - "--collect.info_schema.tables"
+      - "--collect.perf_schema.tablelocks"
+      - "--collect.perf_schema.file_events"
+      - "--collect.perf_schema.eventswaits"
+      - "--collect.perf_schema.indexiowaits"
+      - "--collect.perf_schema.tableiowaits"
+      - "--web.listen-address=:9104"
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=false"
+
+  redis-cache:
+    image: docker.io/library/redis:7-alpine
+    container_name: ${PREFIX}redis_cache
+    restart: unless-stopped
+    volumes:
+      - redis_cache_data:/data
+    ports:
+      - "127.0.0.1:${PORT_REDIS}:6379"
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  redis-queue:
+    image: docker.io/library/redis:7-alpine
+    container_name: ${PREFIX}redis_queue
+    restart: unless-stopped
+    networks:
+      - default
+    volumes:
+      - redis_queue_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  redis-exporter:
+    image: docker.io/oliver006/redis_exporter:v1.62.0
+    container_name: ${PREFIX}redis_exporter
+    restart: unless-stopped
+    networks:
+      - default
+    environment:
+      REDIS_ADDR: "redis://${PREFIX}redis_cache:6379"
+    labels:
+      - "traefik.enable=false"
+
+  traefik:
+    image: docker.io/library/traefik:v3
+    container_name: ${PREFIX}traefik
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "127.0.0.1:${PORT_HTTP}:80"
+      - "127.0.0.1:${PORT_HTTPS}:443"
+      # PORT_TRAEFIK_DASH désactivé — dashboard via HTTPS uniquement (api.insecure=false)
+      # - "127.0.0.1:${PORT_TRAEFIK_DASH}:8080"
+    volumes:
+      # Socket Podman rootless monté comme socket Docker (API compatible)
+      - ${PODMAN_SOCKET}:/var/run/docker.sock:ro
+      - ./config/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./config/traefik/dynamic:/etc/traefik/dynamic:ro
+      - ./config/traefik/certs:/certs:ro
+    networks:
+      - default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik-dashboard.rule=Host(`traefik.${DOMAIN}`)"
+      - "traefik.http.routers.traefik-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.traefik-dashboard.tls=true"
+      - "traefik.http.routers.traefik-dashboard.service=api@internal"
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── PRESS ──────────────────────────────────────────────────────────────────
+
+  press:
+    build:
+      context: ./docker/press
+      dockerfile: Dockerfile
+    image: ${PREFIX}press:latest
+    container_name: ${PREFIX}press
+    restart: unless-stopped
+    volumes:
+      - press_home:/home/frappe
+      - ./data/ssh:/home/frappe/.ssh:ro
+      - ./apps/press_patches:/home/frappe/press_patches:ro
+    ports:
+      - "127.0.0.1:${PORT_PRESS}:8000"
+    networks:
+      - default
+    environment:
+      SITE_NAME: ${PRESS_SITE_NAME}
+      ADMIN_PASSWORD: ${PRESS_ADMIN_PASSWORD}
+      ADMIN_EMAIL: ${PRESS_ADMIN_EMAIL}
+      DB_HOST: ${PREFIX}mariadb
+      DB_PORT: 3306
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      REDIS_CACHE_URL: redis://${PREFIX}redis_cache:6379
+      REDIS_QUEUE_URL: redis://${PREFIX}redis_queue:6379
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.press.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.press.entrypoints=websecure"
+      - "traefik.http.routers.press.tls=true"
+      - "traefik.http.services.press.loadbalancer.server.port=8000"
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-s", "http://localhost:8000/api/method/ping"]
+      interval: 30s
+      timeout: 15s
+      retries: 10
+      start_period: 300s
+
+  # ── SERVER ─────────────────────────────────────────────────────────────────
+
+  server:
+    build:
+      context: ./docker/server
+      dockerfile: Dockerfile
+    image: ${PREFIX}server:latest
+    container_name: ${PREFIX}server
+    restart: unless-stopped
+    hostname: server.press.local
+    volumes:
+      - server_home:/home/frappe
+      - server_benches:/home/frappe/benches
+    ports:
+      - "127.0.0.1:${PORT_SERVER_SSH}:22"
+      - "127.0.0.1:${PORT_SERVER_AGENT}:8000"
+    networks:
+      - default
+    environment:
+      PRESS_PUBLIC_KEY: ${PRESS_PUBLIC_KEY:-}
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "ss -tlnp | grep ':22' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── STORAGE ────────────────────────────────────────────────────────────────
+
+  garage:
+    image: docker.io/dxflrs/garage:v1.0.0
+    container_name: ${PREFIX}garage
+    restart: unless-stopped
+    volumes:
+      - ./config/garage/garage.toml:/etc/garage.toml:ro
+      - garage_data:/var/lib/garage/data
+      - garage_meta:/var/lib/garage/meta
+    ports:
+      - "127.0.0.1:${PORT_GARAGE_S3}:3900"
+      - "127.0.0.1:${PORT_GARAGE_WEB}:3902"
+    networks:
+      - default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.garage-s3.rule=Host(`s3.${DOMAIN}`)"
+      - "traefik.http.routers.garage-s3.entrypoints=websecure"
+      - "traefik.http.routers.garage-s3.tls=true"
+      - "traefik.http.services.garage-s3.loadbalancer.server.port=3900"
+    healthcheck:
+      # Garage est distroless (pas de shell/curl) — test TCP via /garage binary
+      # Le binaire /garage sans args retourne exit 0 si le processus est vivant
+      test: ["CMD", "/garage", "--help"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ── GIT ────────────────────────────────────────────────────────────────────
+
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:9
+    container_name: ${PREFIX}forgejo
+    restart: unless-stopped
+    environment:
+      USER_UID: 1000
+      USER_GID: 1000
+      FORGEJO__database__DB_TYPE: sqlite3
+      FORGEJO__database__PATH: /data/gitea/forgejo.db
+      FORGEJO__server__DOMAIN: git.${DOMAIN}
+      FORGEJO__server__ROOT_URL: https://git.${DOMAIN}/
+      FORGEJO__server__SSH_PORT: ${PORT_FORGEJO_SSH}
+      FORGEJO__server__SSH_LISTEN_PORT: 2222
+      FORGEJO__server__START_SSH_SERVER: "true"
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      FORGEJO__log__LEVEL: warn
+    volumes:
+      - forgejo_data:/data
+      - forgejo_repos:/data/git/repositories
+    ports:
+      - "127.0.0.1:${PORT_FORGEJO_HTTP}:3000"
+      - "127.0.0.1:${PORT_FORGEJO_SSH}:2222"
+    networks:
+      - default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.forgejo.rule=Host(`git.${DOMAIN}`)"
+      - "traefik.http.routers.forgejo.entrypoints=websecure"
+      - "traefik.http.routers.forgejo.tls=true"
+      - "traefik.http.services.forgejo.loadbalancer.server.port=3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/healthz"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ── MAIL ───────────────────────────────────────────────────────────────────
+
+  stalwart:
+    image: docker.io/stalwartlabs/stalwart:latest
+    container_name: ${PREFIX}stalwart
+    restart: unless-stopped
+    volumes:
+      - stalwart_data:/opt/stalwart
+    ports:
+      - "127.0.0.1:${PORT_STALWART_SMTP}:25"
+      - "127.0.0.1:${PORT_STALWART_IMAP}:993"
+      - "127.0.0.1:${PORT_STALWART_HTTP}:8080"
+    networks:
+      - default
+    environment:
+      TZ: Europe/Paris
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.stalwart.rule=Host(`mail.${DOMAIN}`)"
+      - "traefik.http.routers.stalwart.entrypoints=websecure"
+      - "traefik.http.routers.stalwart.tls=true"
+      - "traefik.http.services.stalwart.loadbalancer.server.port=8080"
+    healthcheck:
+      # Stalwart a bash mais pas curl/wget — test TCP via /dev/tcp
+      test: ["CMD", "/bin/bash", "-c", "echo > /dev/tcp/localhost/8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ── MONITORING ─────────────────────────────────────────────────────────────
+
+  node-exporter:
+    image: docker.io/prom/node-exporter:v1.8.1
+    container_name: ${PREFIX}node_exporter
+    restart: unless-stopped
+    networks:
+      - default
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.rootfs=/rootfs"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    labels:
+      - "traefik.enable=false"
+
+  prometheus:
+    image: docker.io/prom/prometheus:v2.52.0
+    container_name: ${PREFIX}prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:${PORT_PROMETHEUS}:9090"
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  loki:
+    image: docker.io/grafana/loki:3.0.0
+    container_name: ${PREFIX}loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki.yml
+    volumes:
+      - ./config/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki_data:/loki
+    ports:
+      - "127.0.0.1:${PORT_LOKI}:3100"
+    networks:
+      - default
+    healthcheck:
+      # /loki/api/v1/labels retourne 200 même pendant l'ingester warmup
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/loki/api/v1/labels || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  promtail:
+    image: docker.io/grafana/promtail:3.0.0
+    container_name: ${PREFIX}promtail
+    restart: unless-stopped
+    networks:
+      - default
+    volumes:
+      - ./config/promtail:/etc/promtail:ro
+      - /run/user/1000/podman/podman.sock:/var/run/docker.sock:ro
+    command: -config.file=/etc/promtail/promtail.yml
+    depends_on:
+      - loki
+    labels:
+      - "traefik.enable=false"
+
+  grafana:
+    image: docker.io/grafana/grafana:11.1.0
+    container_name: ${PREFIX}grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-grafana_admin_2024}
+      GF_SERVER_ROOT_URL: https://monitor.${DOMAIN}
+      GF_SERVER_SERVE_FROM_SUB_PATH: "false"
+      GF_INSTALL_PLUGINS: ""
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "127.0.0.1:${PORT_GRAFANA}:3000"
+    networks:
+      - default
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`monitor.${DOMAIN}`)"
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      - "traefik.http.routers.grafana.tls=true"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── AI ─────────────────────────────────────────────────────────────────────
+
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    container_name: ${PREFIX}ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "127.0.0.1:${PORT_OLLAMA}:11434"
+    networks:
+      - default
+    environment:
+      OLLAMA_HOST: 0.0.0.0
+      OLLAMA_ORIGINS: "https://ai.press.local:14002,http://localhost,http://127.0.0.1"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: ${PREFIX}openwebui
+    restart: unless-stopped
+    volumes:
+      - openwebui_data:/app/backend/data
+    ports:
+      - "127.0.0.1:${PORT_OPENWEBUI}:8080"
+    networks:
+      - default
+    environment:
+      OLLAMA_BASE_URL: http://${PREFIX}ollama:11434
+      WEBUI_AUTH: "true"
+      ENABLE_SIGNUP: "false"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.openwebui.rule=Host(`ai.${DOMAIN}`)"
+      - "traefik.http.routers.openwebui.entrypoints=websecure"
+      - "traefik.http.routers.openwebui.tls=true"
+      - "traefik.http.services.openwebui.loadbalancer.server.port=8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s

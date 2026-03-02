@@ -1,0 +1,31 @@
+# Tier 0 — Core: Redis queue
+# Queue de tâches pour Press + workers RQ
+
+[Unit]
+Description=Presse Claude — Redis 7 Queue
+After=network-online.target presse-claude-network.service
+Wants=network-online.target
+Requires=presse-claude-network.service
+
+[Container]
+Image=docker.io/library/redis:7-alpine
+ContainerName=presse_claude_redis_queue
+Label=com.docker.compose.project=presse_claude
+
+Network=presse-claude.network
+# Pas de port exposé — interne uniquement
+
+HealthCmd=CMD redis-cli ping
+HealthInterval=10s
+HealthTimeout=3s
+HealthRetries=5
+
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+RestartSec=5
+TimeoutStartSec=30
+
+[Install]
+WantedBy=presse-claude-core.target

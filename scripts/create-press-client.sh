@@ -23,7 +23,7 @@ SITE="press.local"
 echo "==> Creating Press client: ${EMAIL} (${FIRST_NAME} ${LAST_NAME})"
 
 # Write Python script to container
-docker exec "$PRESS_CONTAINER" bash -c "cat > /tmp/create_client_tmp.py" << PYEOF
+podman exec "$PRESS_CONTAINER" bash -c "cat > /tmp/create_client_tmp.py" << PYEOF
 import frappe
 from frappe.utils.password import update_password
 
@@ -73,6 +73,6 @@ else:
 print('Ready: ' + EMAIL + ' can login at http://press.local:14010')
 PYEOF
 
-docker exec "$PRESS_CONTAINER" bash -c "cd ${BENCH_DIR} && bench --site ${SITE} execute \"exec(open('/tmp/create_client_tmp.py').read())\" && rm -f /tmp/create_client_tmp.py"
+podman exec "$PRESS_CONTAINER" bash -c "cd ${BENCH_DIR} && bench --site ${SITE} execute \"exec(open('/tmp/create_client_tmp.py').read())\" && rm -f /tmp/create_client_tmp.py"
 
 echo "==> Done!"

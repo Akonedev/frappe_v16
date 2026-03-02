@@ -1,0 +1,32 @@
+# Tier 3 — Observability: MySQL/MariaDB Exporter
+# Expose les métriques MariaDB pour Prometheus
+# Note: .my.cnf monté au chemin par défaut /root/.my.cnf
+#       Exec= accepte un seul argument en Quadlet (pas de multi-ligne)
+
+[Unit]
+Description=Presse Claude — MariaDB Metrics Exporter
+After=network-online.target presse-claude-mariadb.service
+Wants=presse-claude-mariadb.service
+Requires=presse-claude-network.service
+
+[Container]
+Image=docker.io/prom/mysqld-exporter:v0.15.1
+ContainerName=presse_claude_mysqld_exporter
+
+Network=presse-claude.network
+
+# Credentials via .my.cnf — flag explicit (seul Exec= possible en Quadlet)
+Volume=%h/Documents/Dev/01_Enccours/Presse_claude/config/mysqld-exporter/.my.cnf:/etc/mysqld-exporter/.my.cnf:ro
+
+Exec=--config.my-cnf=/etc/mysqld-exporter/.my.cnf --web.listen-address=:9104
+
+Label=traefik.enable=false
+Label=com.docker.compose.project=presse_claude
+
+[Service]
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=60
+
+[Install]
+WantedBy=presse-claude-observability.target

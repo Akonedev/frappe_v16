@@ -1,0 +1,5 @@
+[Unit]
+Description=Presse Claude — Forgejo données
+
+[Volume]
+VolumeName=presse_claude_forgejo_data

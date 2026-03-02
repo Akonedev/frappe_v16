@@ -1,0 +1,15 @@
+# Target Tier 1 — SaaS Platform
+# Groupe: Press Dashboard + Server Agent
+# Profil "small" : core + press
+
+[Unit]
+Description=Presse Claude — SaaS Platform (Tier 1)
+Requires=presse-claude-core.target
+After=presse-claude-core.target
+Wants=presse-claude-press.service \
+      presse-claude-server.service
+After=presse-claude-press.service \
+      presse-claude-server.service
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,5 @@
+[Unit]
+Description=Presse Claude — MariaDB données persistantes
+
+[Volume]
+VolumeName=presse_claude_mariadb_data

@@ -1,0 +1,5 @@
+[Unit]
+Description=Presse Claude — Garage S3 données objets
+
+[Volume]
+VolumeName=presse_claude_garage_data

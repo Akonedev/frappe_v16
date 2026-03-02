@@ -5,9 +5,11 @@
 
 set -euo pipefail
 
-FORGEJO_URL="http://localhost:14050"
-FORGEJO_USER="gitadmin"
-FORGEJO_PASS="presse_admin_2024"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../.env" 2>/dev/null || true
+FORGEJO_URL="http://localhost:${PORT_FORGEJO_HTTP:-14050}"
+FORGEJO_USER="${FORGEJO_ADMIN_USER:-gitadmin}"
+FORGEJO_PASS="${FORGEJO_ADMIN_PASSWORD:-presse_admin_2024}"
 WORK_DIR="/tmp/frappe_apps_sync_$$"
 
 # Apps à synchroniser: (app_name, github_url, branch, forgejo_org)
@@ -56,20 +58,20 @@ sync_app() {
     echo "→ Syncing $app_name ($branch) from $github_url..."
     
     local app_dir="$WORK_DIR/$app_name"
-    local forgejo_url="http://${FORGEJO_USER}:${FORGEJO_PASS}@localhost:14050/${org}/${app_name}.git"
+    local forgejo_url="http://${FORGEJO_USER}:${FORGEJO_PASS}@localhost:${PORT_FORGEJO_HTTP:-14050}/${org}/${app_name}.git"
     
     # Clone sparse from GitHub (only the target branch)
     if git clone --depth=1 --branch "$branch" --single-branch "$github_url" "$app_dir" 2>/dev/null; then
-        cd "$app_dir"
-        git remote add forgejo "$forgejo_url"
-        
-        # Push to Forgejo
-        if git push forgejo HEAD:refs/heads/"$branch" --force 2>/dev/null; then
-            echo "✓ $app_name pushed to Forgejo (branch: $branch)"
-        else
-            echo "WARN: Push failed for $app_name"
-        fi
-        cd "$WORK_DIR"
+        (
+            cd "$app_dir"
+            git remote add forgejo "$forgejo_url"
+            # Push to Forgejo
+            if git push forgejo HEAD:refs/heads/"$branch" --force 2>/dev/null; then
+                echo "✓ $app_name pushed to Forgejo (branch: $branch)"
+            else
+                echo "WARN: Push failed for $app_name"
+            fi
+        )
     else
         echo "WARN: Clone failed for $app_name from $github_url"
     fi

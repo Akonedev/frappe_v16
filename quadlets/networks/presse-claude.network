@@ -1,0 +1,10 @@
+# Réseau partagé pour tous les services Presse Claude
+# Référencé via Network=presse-claude.network dans les .container
+
+[Unit]
+Description=Presse Claude — réseau partagé
+
+[Network]
+NetworkName=presse_claude_network
+Driver=bridge
+Subnet=172.30.0.0/16

@@ -1,0 +1,44 @@
+# Tier 1 — Press: Server container (Ubuntu + SSH + frappe-agent)
+# Agent Frappe Press pour déploiement de sites clients
+
+[Unit]
+Description=Presse Claude — Server Agent Ubuntu+SSH
+After=network-online.target presse-claude-core.target
+Requires=presse-claude-mariadb.service presse-claude-redis-cache.service presse-claude-network.service
+
+[Container]
+Image=presse_claude_server:latest
+ContainerName=presse_claude_server
+Label=com.docker.compose.project=presse_claude
+# hostname utilisé par Press pour identifier le serveur
+HostName=server.press.local
+
+Network=presse-claude.network
+
+Volume=presse-claude-server-home.volume:/home/frappe
+Volume=presse-claude-server-benches.volume:/home/frappe/benches
+
+# SSH (accès Press) + Agent HTTP
+PublishPort=127.0.0.1:14021:22
+PublishPort=127.0.0.1:14022:8000
+
+EnvironmentFile=%h/Documents/Dev/01_Enccours/Presse_claude/.env
+
+HealthCmd=CMD-SHELL ss -tlnp | grep ':22'
+HealthInterval=15s
+HealthTimeout=5s
+HealthRetries=5
+HealthStartPeriod=30s
+
+# Capabilities pour SSH server en rootless
+AddCapability=NET_BIND_SERVICE
+
+[Service]
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 20); do podman healthcheck run presse_claude_mariadb 2>/dev/null && break; echo "Waiting for MariaDB... ($i/20)"; sleep 10; done'
+
+Restart=always
+RestartSec=10
+TimeoutStartSec=120
+
+[Install]
+WantedBy=presse-claude-press.target

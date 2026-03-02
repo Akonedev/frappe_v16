@@ -1,0 +1,5 @@
+[Unit]
+Description=Presse Claude — Loki données logs
+
+[Volume]
+VolumeName=presse_claude_loki_data

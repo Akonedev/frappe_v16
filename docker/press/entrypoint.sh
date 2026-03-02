@@ -308,7 +308,7 @@ cat > sites/common_site_config.json << CFGEOF
   "redis_socketio": "${REDIS_CACHE}",
   "file_watcher_port": 6787,
   "shallow_clone": true,
-  "developer_mode": 1
+  "developer_mode": ${FRAPPE_DEVELOPER_MODE:-0}
 }
 CFGEOF
 echo "✓ Config Redis: cache=${REDIS_CACHE}"

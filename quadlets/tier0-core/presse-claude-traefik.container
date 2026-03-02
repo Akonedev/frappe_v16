@@ -1,0 +1,51 @@
+# Tier 0 — Core: Traefik v3 reverse proxy
+# Point d'entrée HTTPS pour tous les services
+# Utilise le socket Podman rootless via %t (= $XDG_RUNTIME_DIR = /run/user/1000)
+
+[Unit]
+Description=Presse Claude — Traefik v3 Reverse Proxy
+After=network-online.target presse-claude-network.service podman-rest-api.service
+Wants=network-online.target podman-rest-api.service
+Requires=presse-claude-network.service
+
+[Container]
+Image=docker.io/library/traefik:v3
+ContainerName=presse_claude_traefik
+
+Network=presse-claude.network
+
+# Ports publics (HTTP, HTTPS — dashboard désactivé, accès via HTTPS uniquement)
+PublishPort=127.0.0.1:14001:80
+PublishPort=127.0.0.1:14002:443
+
+# Socket Podman rootless (%t = /run/user/1000)
+Volume=%t/podman/podman.sock:/var/run/docker.sock:ro
+
+# Config Traefik depuis le projet (read-only)
+Volume=%h/Documents/Dev/01_Enccours/Presse_claude/config/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+Volume=%h/Documents/Dev/01_Enccours/Presse_claude/config/traefik/dynamic:/etc/traefik/dynamic:ro
+Volume=%h/Documents/Dev/01_Enccours/Presse_claude/config/traefik/certs:/certs:ro
+
+# Labels Traefik pour son propre dashboard
+Label=traefik.enable=true
+Label=traefik.http.routers.traefik-dashboard.rule=Host(`traefik.press.local`)
+Label=traefik.http.routers.traefik-dashboard.entrypoints=websecure
+Label=traefik.http.routers.traefik-dashboard.tls=true
+Label=traefik.http.routers.traefik-dashboard.service=api@internal
+Label=com.docker.compose.project=presse_claude
+
+HealthCmd=CMD traefik healthcheck --ping
+HealthInterval=10s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartPeriod=10s
+
+[Service]
+Restart=always
+RestartSec=5
+# Augmenter la limite de fichiers ouverts pour les nombreuses connexions
+LimitNOFILE=65536
+TimeoutStartSec=30
+
+[Install]
+WantedBy=presse-claude-core.target

@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 source "${PROJECT_DIR}/.env"
 
-GARAGE="docker exec ${PREFIX}garage /garage"
+GARAGE="podman exec ${PREFIX}garage /garage"
 
 echo "=== Configuration Garage S3 ==="
 

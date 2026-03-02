@@ -1,0 +1,47 @@
+# Tier 3 — Observability: Grafana
+# Dashboards — dépend de Prometheus + Loki
+
+[Unit]
+Description=Presse Claude — Grafana Dashboards
+After=network-online.target presse-claude-prometheus.service presse-claude-loki.service
+Wants=presse-claude-prometheus.service presse-claude-loki.service
+Requires=presse-claude-network.service
+
+[Container]
+Image=docker.io/grafana/grafana:latest
+ContainerName=presse_claude_grafana
+
+Network=presse-claude.network
+
+Volume=presse-claude-grafana-data.volume:/var/lib/grafana
+Volume=%h/Documents/Dev/01_Enccours/Presse_claude/config/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+
+PublishPort=127.0.0.1:14071:3000
+
+EnvironmentFile=%h/Documents/Dev/01_Enccours/Presse_claude/.env
+Environment=GF_SECURITY_ADMIN_USER=admin
+Environment=GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-grafana_admin_2024}
+Environment=GF_SERVER_ROOT_URL=https://monitor.press.local
+Environment=GF_SERVER_SERVE_FROM_SUB_PATH=false
+Environment=GF_ANALYTICS_REPORTING_ENABLED=false
+
+Label=traefik.enable=true
+Label=traefik.http.routers.grafana.rule=Host(`monitor.press.local`)
+Label=traefik.http.routers.grafana.entrypoints=websecure
+Label=traefik.http.routers.grafana.tls=true
+Label=traefik.http.services.grafana.loadbalancer.server.port=3000
+Label=com.docker.compose.project=presse_claude
+
+HealthCmd=CMD wget -q --spider http://localhost:3000/api/health
+HealthInterval=15s
+HealthTimeout=5s
+HealthRetries=5
+HealthStartPeriod=30s
+
+[Service]
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=120
+
+[Install]
+WantedBy=presse-claude-observability.target

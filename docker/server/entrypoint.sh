@@ -150,6 +150,7 @@ if old in content:
 else:
     print("==> AVERTISSEMENT: _reload_nginx non patché (version agent différente?)")
 PYEOF
+|| echo "==> WARN: patch _reload_nginx échoué (non bloquant)"
 
 # ── Corriger les permissions SQLite de l'agent ────────────────────────────────
 mkdir -p "${AGENT_DIR}"
@@ -217,7 +218,7 @@ fi
 # Afficher le token d'accès (pour l'enregistrement dans Press)
 if [ -f "${AGENT_DIR}/config.json" ]; then
   AGENT_TOKEN=$(python3 -c "import json; c=json.load(open('${AGENT_DIR}/config.json')); print(c.get('access_token',''))")
-  echo "==> Agent token: ${AGENT_TOKEN}"
+  echo "==> Agent token: ${AGENT_TOKEN:0:8}... (masqué pour sécurité)"
 fi
 
 # ── Démarrer frappe-agent web server ──────────────────────────────────────────
@@ -230,8 +231,7 @@ echo "==> Démarrage de frappe-agent sur port ${AGENT_PORT}..."
 sudo -u frappe env HOME="/home/frappe" \
   "${GUNICORN}" \
   --bind "0.0.0.0:${AGENT_PORT}" \
-  --workers 2 \
-  --preload \
+  --workers 1 \
   --chdir "${AGENT_DIR}" \
   agent.web:application \
   > /tmp/frappe-agent.log 2>&1 &
@@ -336,6 +336,39 @@ if 'node:http' in content and 'http.request' in content:
 else:
     print(f"==> AVERTISSEMENT: patch {path} incomplet (version frappe différente?)")
 PYEOF
+
+  # Patch authenticate.js : skip origin check when Origin header is absent (WebSocket transport)
+  # Bug: get_hostname(undefined) returns undefined != hostname => Invalid origin
+  # Fix: only enforce origin check when Origin header is actually present
+  python3 - "${FRAPPE_REALTIME}/middlewares/authenticate.js" <<'PYEOF2'
+import sys
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+if 'const _origin = socket.request.headers.origin' in content:
+    print(f"==> {path} origin-fix deja applique")
+    sys.exit(0)
+old_check = (
+    "\tif (get_hostname(socket.request.headers.host) != get_hostname(socket.request.headers.origin)) {\n"
+    "\t\tnext(new Error(\"Invalid origin\"));\n"
+    "\t\treturn;\n"
+    "\t}"
+)
+new_check = (
+    "\tconst _origin = socket.request.headers.origin;\n"
+    "\tif (_origin !== undefined && get_hostname(socket.request.headers.host) != get_hostname(_origin)) {\n"
+    "\t\tnext(new Error(\"Invalid origin\"));\n"
+    "\t\treturn;\n"
+    "\t}"
+)
+if old_check in content:
+    content = content.replace(old_check, new_check)
+    with open(path, "w") as f:
+        f.write(content)
+    print(f"==> {path} patche (origin-fix: skip check when Origin absent)")
+else:
+    print(f"==> AVERTISSEMENT: origin-fix non applique (pattern non trouve dans {path})")
+PYEOF2
 done
 
 # ── Démarrer les gunicorn pour les benches existants ─────────────────────────
@@ -377,6 +410,34 @@ for BENCH_DIR in "${BENCHES_DIR}"/bench-*/; do
       ) &
       echo "==> socket.io PID: $!"
     fi
+
+    # ── Démarrer RQ workers pour ce bench ─────────────────────────────────────
+    # Frappe v16 queue names: {sanitized_bench_path}:{queue}
+    # sanitized = bench dir path avec '/' → '-' et sans '/' initial
+    echo "==> Démarrage RQ workers pour bench: ${BENCH_NAME}"
+    BENCH_WORKER_NAME=$(echo "${BENCH_DIR}" | sed 's|^/||;s|/|-|g')
+    BENCH_QUEUES="${BENCH_WORKER_NAME}:short ${BENCH_WORKER_NAME}:default ${BENCH_WORKER_NAME}:long"
+    REDIS_QUEUE_URL=$(python3 -c "import json; c=json.load(open('${BENCH_DIR}/sites/common_site_config.json')); print(c.get('redis_queue','redis://localhost:6379'))" 2>/dev/null || echo "redis://presse_claude_redis_queue:6379")
+    (
+      sudo -u frappe env HOME="/home/frappe" \
+        "${BENCH_DIR}/env/bin/python" -m rq.cli worker \
+        --url "${REDIS_QUEUE_URL}" \
+        ${BENCH_QUEUES} \
+        >> "/tmp/rq-${BENCH_NAME}.log" 2>&1
+    ) &
+    RQ_PID=$!
+    echo "==> RQ workers PID: ${RQ_PID} (queues: ${BENCH_QUEUES})"
+
+    # ── Démarrer bench schedule (tâches planifiées Frappe) ───────────────────
+    echo "==> Démarrage bench schedule pour: ${BENCH_NAME}"
+    (
+      cd "${BENCH_DIR}"
+      sudo -u frappe env HOME="/home/frappe" \
+        "${BENCH_DIR}/env/bin/python" \
+        -m frappe.utils.scheduler \
+        >> "/tmp/schedule-${BENCH_NAME}.log" 2>&1
+    ) &
+    echo "==> Bench schedule PID: $!"
 
     BENCH_PORT=$((BENCH_PORT + 1))
   fi
@@ -423,5 +484,22 @@ done
 
 # ── Maintenir le container en vie ─────────────────────────────────────────────
 echo "==> Tous les services démarrés. Container en cours d'exécution..."
-wait || true
-exec tail -f /dev/null
+# Surveiller les processus critiques - redémarrer si mort
+while true; do
+  sleep 30
+  # Vérifier gunicorn bench (port 8001)
+  if ! ss -tlnp 2>/dev/null | grep -q ':8001 '; then
+    echo "==> WARN: gunicorn bench mort - redémarrage..."
+    for BENCH_DIR in "${BENCHES_DIR}"/bench-*/; do
+      if [ -d "${BENCH_DIR}env" ]; then
+        BENCH_NAME=$(basename "${BENCH_DIR}")
+        BENCH_GUNICORN="${BENCH_DIR}env/bin/gunicorn"
+        [ -x "${BENCH_GUNICORN}" ] && sudo -u frappe env HOME="/home/frappe" \
+          "${BENCH_GUNICORN}" --bind "0.0.0.0:8001" --workers 2 \
+          --worker-class=gthread --threads=4 --timeout 120 \
+          --chdir "${BENCH_DIR}sites" frappe.app:application \
+          >> "/tmp/bench-${BENCH_NAME}.log" 2>&1 &
+      fi
+    done
+  fi
+done

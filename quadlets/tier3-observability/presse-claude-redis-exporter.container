@@ -1,0 +1,27 @@
+# Tier 3 — Observability: Redis Exporter
+# Expose les métriques Redis (cache) pour Prometheus
+
+[Unit]
+Description=Presse Claude — Redis Metrics Exporter
+After=network-online.target presse-claude-redis-cache.service
+Wants=presse-claude-redis-cache.service
+Requires=presse-claude-network.service
+
+[Container]
+Image=docker.io/oliver006/redis_exporter:v1.62.0
+ContainerName=presse_claude_redis_exporter
+
+Network=presse-claude.network
+
+Environment=REDIS_ADDR=redis://presse_claude_redis_cache:6379
+
+Label=traefik.enable=false
+Label=com.docker.compose.project=presse_claude
+
+[Service]
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=60
+
+[Install]
+WantedBy=presse-claude-observability.target

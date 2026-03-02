@@ -42,7 +42,7 @@ echo ""
 # Créer l'admin via CLI Docker (exécuté en tant qu'utilisateur git)
 # Note: le nom 'admin' est réservé dans Forgejo, utiliser un autre nom (ex: gitadmin)
 echo "→ Création du compte admin (${ADMIN})..."
-docker exec -u git "${PREFIX}forgejo" forgejo admin user create \
+podman exec -u git "${PREFIX}forgejo" forgejo admin user create \
   --username "${ADMIN}" \
   --password "${PASS}" \
   --email "${FORGEJO_ADMIN_EMAIL}" \

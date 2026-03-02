@@ -1,0 +1,47 @@
+# Tier 4 — AI: Open WebUI
+# Interface web pour Ollama — dépend d'Ollama healthy
+
+[Unit]
+Description=Presse Claude — Open WebUI
+After=network-online.target presse-claude-ollama.service
+Wants=presse-claude-ollama.service
+Requires=presse-claude-network.service
+
+[Container]
+Image=ghcr.io/open-webui/open-webui:main
+ContainerName=presse_claude_openwebui
+
+Network=presse-claude.network
+
+Volume=presse-claude-openwebui-data.volume:/app/backend/data
+
+PublishPort=127.0.0.1:14083:8080
+
+Environment=OLLAMA_BASE_URL=http://presse_claude_ollama:11434
+Environment=WEBUI_AUTH=true
+Environment=ENABLE_SIGNUP=false
+Environment=OLLAMA_ORIGINS=https://ai.press.local:14002,http://localhost,http://127.0.0.1
+
+Label=traefik.enable=true
+Label=traefik.http.routers.openwebui.rule=Host(`ai.press.local`)
+Label=traefik.http.routers.openwebui.entrypoints=websecure
+Label=traefik.http.routers.openwebui.tls=true
+Label=traefik.http.services.openwebui.loadbalancer.server.port=8080
+Label=com.docker.compose.project=presse_claude
+
+HealthCmd=CMD curl -f http://localhost:8080/health
+HealthInterval=30s
+HealthTimeout=10s
+HealthRetries=5
+HealthStartPeriod=60s
+
+[Service]
+# Attendre Ollama avant de démarrer
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 12); do podman healthcheck run presse_claude_ollama 2>/dev/null && break; echo "Waiting for Ollama... ($i/12)"; sleep 10; done'
+
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=180
+
+[Install]
+WantedBy=presse-claude-ai.target

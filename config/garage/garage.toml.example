@@ -1,0 +1,27 @@
+# config/garage/garage.toml.example — Template à copier en garage.toml
+# NE JAMAIS committer les vraies valeurs de rpc_secret et admin_token
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "lmdb"
+
+replication_factor = 1
+
+rpc_bind_addr = "0.0.0.0:3901"
+rpc_public_addr = "presse_claude_garage:3901"
+# Générer avec: openssl rand -hex 32
+rpc_secret = "REPLACE_WITH_openssl_rand_-hex_32_OUTPUT"
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "0.0.0.0:3900"
+root_domain = ".s3.press.local"
+
+[s3_web]
+bind_addr = "0.0.0.0:3902"
+root_domain = ".s3.press.local"
+index = "index.html"
+
+[admin]
+api_bind_addr = "0.0.0.0:3903"
+# Générer avec: openssl rand -hex 32
+admin_token = "REPLACE_WITH_SECURE_TOKEN"

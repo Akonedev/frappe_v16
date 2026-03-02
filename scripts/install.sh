@@ -28,11 +28,11 @@ echo ""
 
 # ── Prérequis ────────────────────────────────────────────────────────────────
 step "Vérification des prérequis"
-command -v docker >/dev/null 2>&1 || error "Docker non installé"
+command -v podman >/dev/null 2>&1 || error "Podman non installé"
+command -v podman-compose >/dev/null 2>&1 || error "podman-compose non installé (pip3 install podman-compose)"
 command -v git >/dev/null 2>&1 || error "Git non installé"
-docker compose version >/dev/null 2>&1 || error "docker compose v2 non installé"
-info "Docker: $(docker --version | cut -d' ' -f3)"
-info "Docker Compose: $(docker compose version --short)"
+info "Podman: $(podman --version)"
+info "podman-compose: $(podman-compose version 2>/dev/null | head -1)"
 
 # ── Fichier .env ─────────────────────────────────────────────────────────────
 step "Configuration"
@@ -56,11 +56,11 @@ step "DNS local (${DOMAIN})"
 
 # ── Infrastructure ────────────────────────────────────────────────────────────
 step "Infrastructure (MariaDB, Redis, Traefik)"
-docker compose --env-file .env up -d mariadb redis-cache redis-queue traefik
+podman-compose -f podman-compose.yml --env-file .env up -d mariadb redis-cache redis-queue traefik
 
 info "Attente que MariaDB soit prêt..."
 for i in {1..30}; do
-  if docker exec "${PREFIX}mariadb" mysqladmin ping -u root -p"${MARIADB_ROOT_PASSWORD}" -h localhost --silent 2>/dev/null; then
+  if podman exec "${PREFIX}mariadb" mysqladmin ping -u root -p"${MARIADB_ROOT_PASSWORD}" -h localhost --silent 2>/dev/null; then
     info "MariaDB prêt."
     break
   fi
@@ -69,20 +69,20 @@ done
 
 # ── Garage S3 ─────────────────────────────────────────────────────────────────
 step "Garage S3"
-docker compose --env-file .env up -d garage
+podman-compose -f podman-compose.yml --env-file .env up -d garage
 sleep 10
 ./scripts/setup-garage.sh
 
 # ── Server container ──────────────────────────────────────────────────────────
 step "Container server (Ubuntu+SSH)"
-docker compose --env-file .env build server
-docker compose --env-file .env up -d server
+podman-compose -f podman-compose.yml --env-file .env build server
+podman-compose -f podman-compose.yml --env-file .env up -d server
 sleep 15
 
 # ── Press ─────────────────────────────────────────────────────────────────────
 step "Frappe Press"
-docker compose --env-file .env build press
-docker compose --env-file .env up -d press
+podman-compose -f podman-compose.yml --env-file .env build press
+podman-compose -f podman-compose.yml --env-file .env up -d press
 
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
@@ -91,7 +91,7 @@ echo "║  Première initialisation: ~20-30 minutes.           ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""
 echo "Surveiller le progrès:"
-echo "  docker compose --env-file .env logs -f press"
+echo "  podman-compose -f podman-compose.yml --env-file .env logs -f press"
 echo ""
 echo "Quand prêt (bench serve démarré):"
 echo "  ./scripts/setup-press.sh     # Configurer Press Settings"

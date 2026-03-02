@@ -1,0 +1,35 @@
+# Tier 3 — Observability: Node Exporter
+# Expose les métriques système (CPU, RAM, disque) pour Prometheus
+
+[Unit]
+Description=Presse Claude — Node System Metrics Exporter
+After=network-online.target
+Requires=presse-claude-network.service
+
+[Container]
+Image=docker.io/prom/node-exporter:v1.8.1
+ContainerName=presse_claude_node_exporter
+
+Network=presse-claude.network
+
+PodmanArgs=--pid=host
+
+Volume=/proc:/host/proc:ro
+Volume=/sys:/host/sys:ro
+Volume=/:/rootfs:ro
+
+Exec=--path.procfs=/host/proc
+Exec=--path.rootfs=/rootfs
+Exec=--path.sysfs=/host/sys
+Exec=--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+
+Label=traefik.enable=false
+Label=com.docker.compose.project=presse_claude
+
+[Service]
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=60
+
+[Install]
+WantedBy=presse-claude-observability.target

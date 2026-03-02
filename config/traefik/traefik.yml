@@ -2,7 +2,7 @@
 
 api:
   dashboard: true
-  insecure: false
+  # insecure: true  # DÉSACTIVÉ — accès uniquement via HTTPS avec auth
 
 ping: {}
 
@@ -17,6 +17,8 @@ entryPoints:
           permanent: true
   websecure:
     address: ":443"
+  metrics:
+    address: ":8082"
 
 providers:
   docker:
@@ -24,7 +26,14 @@ providers:
     network: presse_claude_network
   file:
     directory: /etc/traefik/dynamic
-    watch: true
+    watch: false
+
+metrics:
+  prometheus:
+    addEntryPointsLabels: true
+    addRoutersLabels: true
+    addServicesLabels: true
+    entryPoint: metrics
 
 log:
   level: INFO

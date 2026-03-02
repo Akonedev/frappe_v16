@@ -4,3 +4,14 @@ data/
 *.pem
 *.key
 *.crt
+
+# Backups de config contenant des secrets
+config/stalwart/config.toml.backup
+config/garage/garage.toml.backup
+
+# Fichiers de secrets générés localement
+*.secret
+*.secrets
+
+# Credentials exporters (générés automatiquement, contiennent des passwords)
+config/mysqld-exporter/.my.cnf

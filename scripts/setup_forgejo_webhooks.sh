@@ -1,4 +1,5 @@
 #!/bin/bash
+set -uo pipefail
 # setup_forgejo_webhooks.sh — Configure les webhooks Forgejo → Press
 # Crée un webhook sur chaque repo Forgejo pour notifier Press à chaque push.
 # Usage: ./scripts/setup_forgejo_webhooks.sh
@@ -48,7 +49,7 @@ for REPO_PATH in "${REPOS[@]}"; do
   REPO=$(echo "$REPO_PATH" | cut -d'/' -f2)
 
   # Vérifier si le repo existe dans Forgejo
-  REPO_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
+  REPO_STATUS=$(curl -s --max-time 30 -o /dev/null -w '%{http_code}' \
     -u "${FORGEJO_CREDS}" \
     "${FORGEJO_URL}/api/v1/repos/${OWNER}/${REPO}")
 
@@ -59,7 +60,7 @@ for REPO_PATH in "${REPOS[@]}"; do
   fi
 
   # Vérifier si webhook existe déjà
-  EXISTING=$(curl -s -u "${FORGEJO_CREDS}" \
+  EXISTING=$(curl -s --max-time 30 -u "${FORGEJO_CREDS}" \
     "${FORGEJO_URL}/api/v1/repos/${OWNER}/${REPO}/hooks" 2>/dev/null | \
     python3 -c "
 import sys,json
@@ -77,7 +78,7 @@ except:
   fi
 
   # Créer le webhook
-  HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+  HTTP_CODE=$(curl -s --max-time 30 -o /dev/null -w '%{http_code}' \
     -u "${FORGEJO_CREDS}" \
     -X POST \
     -H "Content-Type: application/json" \

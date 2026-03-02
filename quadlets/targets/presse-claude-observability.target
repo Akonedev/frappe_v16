@@ -1,0 +1,13 @@
+# Target Tier 3 — Observability
+# Groupe: Prometheus + Loki + Grafana
+# Profil "large" : core + press + devtools + observability
+
+[Unit]
+Description=Presse Claude — Observability Stack (Tier 3)
+After=presse-claude-core.target
+Wants=presse-claude-prometheus.service \
+      presse-claude-loki.service \
+      presse-claude-grafana.service
+
+[Install]
+WantedBy=default.target

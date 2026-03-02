@@ -1,0 +1,14 @@
+# config/traefik/dynamic/headers.yml — Middlewares sécurité HTTP
+# Appliquer le middleware "secure-headers@file" sur les routers souhaités
+http:
+  middlewares:
+    secure-headers:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        forceSTSHeader: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        frameDeny: true

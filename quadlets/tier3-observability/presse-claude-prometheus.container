@@ -1,0 +1,40 @@
+# Tier 3 — Observability: Prometheus
+# Collecte métriques de tous les services
+
+[Unit]
+Description=Presse Claude — Prometheus Metrics
+After=network-online.target presse-claude-network.service
+Wants=network-online.target
+Requires=presse-claude-network.service
+
+[Container]
+Image=docker.io/prom/prometheus:latest
+ContainerName=presse_claude_prometheus
+Label=com.docker.compose.project=presse_claude
+
+Network=presse-claude.network
+
+Volume=%h/Documents/Dev/01_Enccours/Presse_claude/config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+Volume=presse-claude-prometheus-data.volume:/prometheus
+
+PublishPort=127.0.0.1:14070:9090
+
+Exec=--config.file=/etc/prometheus/prometheus.yml \
+     --storage.tsdb.path=/prometheus \
+     --storage.tsdb.retention.time=15d \
+     --web.console.libraries=/usr/share/prometheus/console_libraries \
+     --web.console.templates=/usr/share/prometheus/consoles
+
+HealthCmd=CMD wget -q --spider http://localhost:9090/-/healthy
+HealthInterval=15s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartPeriod=10s
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=60
+
+[Install]
+WantedBy=presse-claude-observability.target

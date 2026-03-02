@@ -1,0 +1,55 @@
+# Tier 0 — Core: MariaDB 10.6
+# Dépendance fondamentale pour Press, Server, et tous les sites Frappe
+
+[Unit]
+Description=Presse Claude — MariaDB 10.6
+Documentation=https://mariadb.org/
+After=network-online.target presse-claude-network.service presse-claude-mariadb-data-volume.service
+Wants=network-online.target
+Requires=presse-claude-network.service presse-claude-mariadb-data-volume.service
+
+[Container]
+Image=docker.io/library/mariadb:10.6
+ContainerName=presse_claude_mariadb
+Label=com.docker.compose.project=presse_claude
+
+# Réseau partagé (DNS containers par nom)
+Network=presse-claude.network
+
+# Volume persistant (via .volume unit → nom presse_claude_mariadb_data)
+Volume=presse-claude-mariadb-data.volume:/var/lib/mysql
+
+# Port sur loopback uniquement (sécurité)
+PublishPort=127.0.0.1:14030:3306
+
+# Credentials depuis .env (pas de duplication)
+EnvironmentFile=%h/Documents/Dev/01_Enccours/Presse_claude/.env
+Environment=MYSQL_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD}
+Environment=MYSQL_DATABASE=${MARIADB_PRESS_DB}
+Environment=MYSQL_USER=${MARIADB_PRESS_USER}
+Environment=MYSQL_PASSWORD=${MARIADB_PRESS_PASSWORD}
+
+# Tuning MariaDB : utf8mb4 + buffer pool optimisé
+Exec=--character-set-server=utf8mb4 \
+     --collation-server=utf8mb4_unicode_ci \
+     --skip-character-set-client-handshake \
+     --innodb-buffer-pool-size=256M \
+     --max-connections=150
+
+# Healthcheck intégré Podman
+HealthCmd=CMD-SHELL mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD
+HealthInterval=10s
+HealthTimeout=5s
+HealthRetries=5
+HealthStartPeriod=30s
+
+# Sécurité rootless
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=120
+
+[Install]
+WantedBy=presse-claude-core.target

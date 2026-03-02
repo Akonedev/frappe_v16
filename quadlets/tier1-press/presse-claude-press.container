@@ -1,0 +1,56 @@
+# Tier 1 — Press: Frappe Press Dashboard SaaS
+# Image buildée localement : make build-press avant install-quadlets
+# Attend MariaDB healthy via ExecStartPre
+
+[Unit]
+Description=Presse Claude — Frappe Press Dashboard
+After=network-online.target presse-claude-core.target
+Requires=presse-claude-mariadb.service presse-claude-redis-cache.service presse-claude-network.service
+
+[Container]
+# Image buildée localement (make build)
+Image=presse_claude_press:latest
+ContainerName=presse_claude_press
+
+Network=presse-claude.network
+
+Volume=presse-claude-press-home.volume:/home/frappe
+Volume=%h/Documents/Dev/01_Enccours/Presse_claude/data/ssh:/home/frappe/.ssh:ro
+Volume=%h/Documents/Dev/01_Enccours/Presse_claude/apps/press_patches:/home/frappe/press_patches:ro
+
+PublishPort=127.0.0.1:14010:8000
+
+# Variables de base depuis .env
+EnvironmentFile=%h/Documents/Dev/01_Enccours/Presse_claude/.env
+# Valeurs calculées (PREFIX + nom → connection strings)
+Environment=SITE_NAME=press.local
+Environment=DB_HOST=presse_claude_mariadb
+Environment=DB_PORT=3306
+Environment=REDIS_CACHE_URL=redis://presse_claude_redis_cache:6379
+Environment=REDIS_QUEUE_URL=redis://presse_claude_redis_queue:6379
+
+# Labels Traefik (press.local → port 8000)
+Label=traefik.enable=true
+Label=traefik.http.routers.press.rule=Host(`press.local`)
+Label=traefik.http.routers.press.entrypoints=websecure
+Label=traefik.http.routers.press.tls=true
+Label=traefik.http.services.press.loadbalancer.server.port=8000
+Label=com.docker.compose.project=presse_claude
+
+HealthCmd=CMD curl -f -s http://localhost:8000/api/method/ping
+HealthInterval=30s
+HealthTimeout=15s
+HealthRetries=10
+HealthStartPeriod=300s
+
+[Service]
+# Attendre MariaDB healthy avant de démarrer
+# (systemd Requires= ne garantit pas la santé du service, seulement son démarrage)
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do podman healthcheck run presse_claude_mariadb 2>/dev/null && break; echo "Waiting for MariaDB... ($i/30)"; sleep 10; done'
+
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=480
+
+[Install]
+WantedBy=presse-claude-press.target

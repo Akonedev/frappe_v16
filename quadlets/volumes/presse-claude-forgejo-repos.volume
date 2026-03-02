@@ -1,0 +1,5 @@
+[Unit]
+Description=Presse Claude — Forgejo dépôts Git
+
+[Volume]
+VolumeName=presse_claude_forgejo_repos

@@ -1,6 +1,6 @@
 # config/traefik/dynamic/client-sites.yml
 # Routes Traefik pour les sites clients Frappe gérés par Press
-# Ce fichier est rechargé automatiquement (watch: true)
+# Traefik watch: false → redémarrer Traefik pour recharger ce fichier
 # Ajouter une entrée par site client créé
 
 http:
@@ -14,6 +14,8 @@ http:
       service: frappe-server
       tls: {}
       priority: 1
+      middlewares:
+        - secure-headers@file
 
     # Route press.local → nginx du container press (priorité max pour éviter capture par wildcard)
     press-admin:
@@ -23,6 +25,65 @@ http:
       service: press-admin-nginx
       tls: {}
       priority: 100
+      middlewares:
+        - secure-headers@file
+
+    # apps.press.local est géré par la wildcard client-sites → frappe-server (bench-0001)
+
+    # Route git.press.local → Forgejo (priorité > wildcard)
+    forgejo:
+      rule: "Host(`git.press.local`)"
+      entryPoints:
+        - websecure
+      service: forgejo-backend
+      tls: {}
+      priority: 50
+      middlewares:
+        - secure-headers@file
+
+    # Route monitor.press.local → Grafana
+    grafana:
+      rule: "Host(`monitor.press.local`)"
+      entryPoints:
+        - websecure
+      service: grafana-backend
+      tls: {}
+      priority: 50
+      middlewares:
+        - secure-headers@file
+
+    # Route ai.press.local → Open WebUI
+    openwebui:
+      rule: "Host(`ai.press.local`)"
+      entryPoints:
+        - websecure
+      service: openwebui-backend
+      tls: {}
+      priority: 50
+      middlewares:
+        - secure-headers@file
+
+    # Route s3.press.local → Garage S3 storage
+    garage-s3-static:
+      rule: "Host(`s3.press.local`)"
+      entryPoints:
+        - websecure
+      service: garage-s3-backend
+      tls: {}
+      priority: 50
+      middlewares:
+        - secure-headers@file
+
+    # Route mail.press.local → Stalwart mail admin
+    stalwart-static:
+      rule: "Host(`mail.press.local`)"
+      entryPoints:
+        - websecure
+      service: stalwart-backend
+      tls: {}
+      priority: 50
+      middlewares:
+        - secure-headers@file
 
   services:
     # Service backend : nginx dans le container server (port 80)
@@ -38,4 +99,39 @@ http:
       loadBalancer:
         servers:
           - url: "http://presse_claude_press:8000"
+        passHostHeader: true
+
+    # Garage S3 API (port 3900)
+    garage-s3-backend:
+      loadBalancer:
+        servers:
+          - url: "http://presse_claude_garage:3900"
+        passHostHeader: true
+
+    # Stalwart mail web admin (port 8080)
+    stalwart-backend:
+      loadBalancer:
+        servers:
+          - url: "http://presse_claude_stalwart:8080"
+        passHostHeader: true
+
+    # Forgejo Git server (port 3000)
+    forgejo-backend:
+      loadBalancer:
+        servers:
+          - url: "http://presse_claude_forgejo:3000"
+        passHostHeader: true
+
+    # Grafana dashboards (port 3000)
+    grafana-backend:
+      loadBalancer:
+        servers:
+          - url: "http://presse_claude_grafana:3000"
+        passHostHeader: true
+
+    # Open WebUI (port 8080)
+    openwebui-backend:
+      loadBalancer:
+        servers:
+          - url: "http://presse_claude_openwebui:8080"
         passHostHeader: true

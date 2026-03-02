@@ -1,0 +1,30 @@
+# Tier 3 — Observability: Promtail
+# Collecte les logs containers via Docker SD (Podman socket compat)
+
+[Unit]
+Description=Presse Claude — Promtail Log Collector
+After=network-online.target presse-claude-loki.service
+Wants=presse-claude-loki.service
+Requires=presse-claude-network.service
+
+[Container]
+Image=docker.io/grafana/promtail:3.0.0
+ContainerName=presse_claude_promtail
+
+Network=presse-claude.network
+
+Volume=%h/Documents/Dev/01_Enccours/Presse_claude/config/promtail:/etc/promtail:ro
+Volume=/run/user/1000/podman/podman.sock:/var/run/docker.sock:ro
+
+Exec=-config.file=/etc/promtail/promtail.yml
+
+Label=traefik.enable=false
+Label=com.docker.compose.project=presse_claude
+
+[Service]
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=60
+
+[Install]
+WantedBy=presse-claude-observability.target

@@ -1,0 +1,37 @@
+# Tier 3 — Observability: Loki
+# Agrégation logs (distroless, pas de curl interne)
+
+[Unit]
+Description=Presse Claude — Loki Log Aggregation
+After=network-online.target presse-claude-network.service
+Wants=network-online.target
+Requires=presse-claude-network.service
+
+[Container]
+Image=docker.io/grafana/loki:latest
+ContainerName=presse_claude_loki
+Label=com.docker.compose.project=presse_claude
+
+Network=presse-claude.network
+
+Volume=%h/Documents/Dev/01_Enccours/Presse_claude/config/loki/loki.yml:/etc/loki/loki.yml:ro
+Volume=presse-claude-loki-data.volume:/loki
+
+PublishPort=127.0.0.1:14072:3100
+
+Exec=-config.file=/etc/loki/loki.yml
+
+# Image distroless → healthcheck via version binary (pas curl/wget)
+HealthCmd=CMD /usr/bin/loki -version
+HealthInterval=15s
+HealthTimeout=5s
+HealthRetries=5
+HealthStartPeriod=15s
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=60
+
+[Install]
+WantedBy=presse-claude-observability.target

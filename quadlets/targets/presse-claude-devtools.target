@@ -1,0 +1,14 @@
+# Target Tier 2 — DevTools
+# Groupe: Garage S3 + Forgejo + Stalwart Mail
+# Profil "medium" : core + press + devtools
+# Indépendant du tier1 — peut démarrer seul si besoin
+
+[Unit]
+Description=Presse Claude — DevTools (Tier 2)
+After=presse-claude-core.target
+Wants=presse-claude-garage.service \
+      presse-claude-forgejo.service \
+      presse-claude-stalwart.service
+
+[Install]
+WantedBy=default.target

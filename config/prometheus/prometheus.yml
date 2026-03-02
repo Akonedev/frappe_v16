@@ -13,17 +13,46 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
-  # Docker containers via cadvisor
-  - job_name: docker_containers
-    static_configs:
-      - targets: ['cadvisor:8080']
-
-  # Traefik métriques
-  - job_name: traefik
-    static_configs:
-      - targets: ['presse_claude_traefik:8080']
-
-  # MariaDB (si mysqld_exporter installé)
-  # - job_name: mariadb
+  # Docker containers via cadvisor — DÉSACTIVÉ: cadvisor non déployé dans ce projet
+  # - job_name: docker_containers
   #   static_configs:
-  #     - targets: ['mariadb_exporter:9104']
+  #     - targets: ['cadvisor:8080']
+
+  # Loki — agrégateur de logs
+  - job_name: loki
+    static_configs:
+      - targets: ['presse_claude_loki:3100']
+
+  # ── EXPORTERS ──────────────────────────────────────────────────────────────
+  - job_name: "mariadb"
+    static_configs:
+      - targets: ["presse_claude_mysqld_exporter:9104"]
+        labels:
+          service: "mariadb"
+
+  - job_name: "redis"
+    static_configs:
+      - targets: ["presse_claude_redis_exporter:9121"]
+        labels:
+          service: "redis"
+
+  - job_name: "node"
+    static_configs:
+      - targets: ["presse_claude_node_exporter:9100"]
+        labels:
+          service: "host"
+
+  # ── SERVICES ───────────────────────────────────────────────────────────────
+  - job_name: "traefik"
+    static_configs:
+      - targets: ["presse_claude_traefik:8082"]
+        labels:
+          service: "traefik"
+
+  - job_name: "forgejo"
+    static_configs:
+      - targets: ["presse_claude_forgejo:3000"]
+        labels:
+          service: "forgejo"
+    metrics_path: "/metrics"
+    bearer_token_file: /etc/prometheus/forgejo_token.txt

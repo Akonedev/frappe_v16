@@ -1,0 +1,5 @@
+[Unit]
+Description=Presse Claude — Ollama modèles LLM
+
+[Volume]
+VolumeName=presse_claude_ollama_data

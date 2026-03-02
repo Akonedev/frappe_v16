@@ -7,6 +7,7 @@ replication_factor = 1
 
 rpc_bind_addr = "0.0.0.0:3901"
 rpc_public_addr = "presse_claude_garage:3901"
+# IMPORTANT: Générer un nouveau secret pour chaque environnement: openssl rand -hex 32
 rpc_secret = "210e25550e7c6e573a4949ddb168483be23d2b3d62a2ea33e96b2d99a8a2e0d6"
 
 [s3_api]
@@ -21,3 +22,4 @@ index = "index.html"
 
 [admin]
 api_bind_addr = "0.0.0.0:3903"
+admin_token = "garage_admin_dev_2024_local_only"

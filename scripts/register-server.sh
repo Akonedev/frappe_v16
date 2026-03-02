@@ -11,7 +11,7 @@ source "${PROJECT_DIR}/.env"
 echo "=== Enregistrement du Server Container dans Press ==="
 
 # Récupérer l'IP interne du container server
-SERVER_IP=$(docker inspect "${PREFIX}server" \
+SERVER_IP=$(podman inspect "${PREFIX}server" \
   --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null | head -1)
 
 if [ -z "${SERVER_IP}" ]; then
@@ -33,7 +33,7 @@ fi
 PUBLIC_KEY=$(cat "${PUBLIC_KEY_FILE}")
 echo "→ Injection de la clé publique Press dans le server..."
 
-docker exec "${PREFIX}server" bash -c "
+podman exec "${PREFIX}server" bash -c "
   mkdir -p /home/frappe/.ssh
   # Éviter les doublons
   if ! grep -qF '${PUBLIC_KEY}' /home/frappe/.ssh/authorized_keys 2>/dev/null; then

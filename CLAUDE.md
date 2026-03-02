@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Projet
 
-**Presse Claude** — Plateforme SaaS Frappe Press 100% locale sur Docker (dev).
+**Presse Claude** — Plateforme SaaS Frappe Press 100% locale sur **Podman** (dev).
 Design complet: `docs/plans/2026-02-18-presse-claude-design.md`
 Plan d'implémentation: `docs/plans/2026-02-18-implementation-plan.md`
 
@@ -12,7 +12,7 @@ Plan d'implémentation: `docs/plans/2026-02-18-implementation-plan.md`
 
 ```bash
 make install         # Installation complète (première fois)
-make start           # Démarrer tous les services
+make start           # Démarrer tous les services (podman-compose)
 make stop            # Arrêter tous les services
 make status          # État des containers
 make logs            # Logs en temps réel
@@ -25,7 +25,33 @@ make dns-remove      # Supprimer les entrées DNS
 make webhooks        # Configurer webhooks Forgejo → Press (23 repos)
 make mkcert          # Générer certificats TLS locaux de confiance (mkcert)
 make clean           # Tout arrêter et supprimer les données
+make build           # (Re)construire les images press et server
 ```
+
+### Quadlets (systemd-native — remplace podman-compose)
+
+```bash
+make quadlets-install         # Installer tous les Quadlets dans ~/.config/containers/systemd/
+make quadlets-install-small   # Profil small (core + press, ~3 Go)
+make quadlets-install-medium  # Profil medium (+ devtools, ~4 Go)
+make quadlets-install-large   # Profil large (+ monitoring, ~5 Go)
+make quadlets-install-gpu     # Profil gpu (+ AI stack, ~9 Go)
+
+make quadlets-start-small     # Démarrer tier0 + tier1
+make quadlets-start-medium    # + tier2 (Garage + Forgejo + Mail)
+make quadlets-start-large     # + tier3 (monitoring)
+make quadlets-start-gpu       # + tier4 (Ollama + OpenWebUI)
+
+make quadlets-stop-all        # Tout arrêter
+make quadlets-status          # État des 35 units systemd
+make quadlets-logs            # Logs via journalctl
+make quadlets-enable          # Activer démarrage automatique au boot
+make quadlets-enable-linger   # loginctl enable-linger (requis pour boot)
+```
+
+> **Podman rootless** — Socket: `/run/user/1000/podman/podman.sock`
+> Fichier compose unifié: `podman-compose.yml` (podman-compose ne supporte pas `include:`)
+> Traefik utilise le socket Podman monté comme `/var/run/docker.sock` (API Docker-compatible)
 
 ## Architecture
 
@@ -66,7 +92,7 @@ Infra:
 | `compose/press.yml` | Frappe Press (dashboard SaaS) |
 | `compose/server.yml` | Container "server" Ubuntu+SSH+Agent |
 | `compose/storage.yml` | Garage S3 (remplace MinIO/AWS S3) |
-| `compose/git.yml` | Forgejo v14 (remplace GitHub) |
+| `compose/git.yml` | Forgejo v9 (remplace GitHub) |
 | `compose/mail.yml` | Stalwart Mail |
 | `compose/monitoring.yml` | Prometheus + Grafana + Loki |
 | `compose/ai.yml` | Ollama + Open WebUI |
@@ -75,6 +101,43 @@ Infra:
 | `config/traefik/` | Config statique + TLS |
 | `config/garage/` | Config Garage S3 |
 
+## Quadlets Podman (systemd-native)
+
+Structure dans `quadlets/` — 35 units systemd générés automatiquement:
+
+| Tier | Services | RAM | Profil |
+|---|---|---|---|
+| `tier0-core/` | Traefik + MariaDB + Redis x2 | ~1 Go | core |
+| `tier1-press/` | Press + Server agent | ~3 Go | small |
+| `tier2-devtools/` | Garage + Forgejo + Stalwart | ~4 Go | medium |
+| `tier3-observability/` | Prometheus + Loki + Grafana | ~5 Go | large |
+| `tier4-ai/` | Ollama + Open WebUI | ~9 Go | gpu |
+
+**Fichiers Quadlet:**
+- `quadlets/networks/` → `.network` (réseau partagé)
+- `quadlets/volumes/` → `.volume` (15 volumes nommés)
+- `quadlets/tier*/` → `.container` (services par tier)
+- `quadlets/targets/` → `.target` systemd (groupes)
+
+**Déploiement:**
+```bash
+# Installer (auto-détecte le profil selon RAM + GPU)
+./quadlets/install.sh
+
+# Ou par profil explicite
+./quadlets/install.sh --profile medium
+
+# Démarrer
+systemctl --user start presse-claude-core.target
+systemctl --user start presse-claude-press.target
+```
+
+**Points importants:**
+- `.target` files → `~/.config/systemd/user/` (PAS dans containers/systemd/)
+- `.container/.volume/.network` → `~/.config/containers/systemd/presse-claude/`
+- `EnvironmentFile=` Quadlet = systemd-level (variables expandées dans ExecStart)
+- GPU AMD: décommenter `AddDevice=/dev/dri/renderD128` dans `tier4-ai/presse-claude-ollama.container`
+
 ## Décisions architecturales
 
 | Décision | Choix | Raison |
@@ -82,7 +145,7 @@ Infra:
 | Provider server | Generic | Pas de dépendance Hetzner/AWS |
 | Provider DNS | Generic | DNS via /etc/hosts |
 | S3 storage | Garage v1.0.0 | MinIO en maintenance mode déc. 2025 |
-| Git server | Forgejo v14 | Hard fork non-profit actif de Gitea |
+| Git server | Forgejo v9 | Hard fork non-profit actif de Gitea |
 | Email | Stalwart + frappe/mail | App officielle Frappe |
 | Proxy | Traefik v3 | Service discovery Docker auto |
 | Branch Press | master | Pas de branche version-16 dans Press |
@@ -100,13 +163,13 @@ Le dashboard `/dashboard` est une Vue SPA qui doit être **buildée** avant util
 ```bash
 # Sur le HOST (240G libres), pas dans le container (disque plein)
 mkdir -p /tmp/fake_bench/apps/press /tmp/fake_bench/sites
-docker cp presse_claude_press:/home/frappe/frappe-bench/apps/press/dashboard/. /tmp/fake_bench/apps/press/dashboard/
+podman cp presse_claude_press:/home/frappe/frappe-bench/apps/press/dashboard/. /tmp/fake_bench/apps/press/dashboard/
 echo '{"socketio_port":9000}' > /tmp/fake_bench/sites/common_site_config.json
 (cd /tmp/fake_bench/apps/press/dashboard && yarn install && yarn run build)
 # Copier les résultats dans le container
-docker cp /tmp/fake_bench/apps/press/press/www/dashboard.html \
+podman cp /tmp/fake_bench/apps/press/press/www/dashboard.html \
   presse_claude_press:/home/frappe/frappe-bench/apps/press/press/www/dashboard.html
-docker cp /tmp/fake_bench/apps/press/press/public/dashboard/. \
+podman cp /tmp/fake_bench/apps/press/press/public/dashboard/. \
   presse_claude_press:/home/frappe/frappe-bench/sites/assets/press/dashboard/
 ```
 

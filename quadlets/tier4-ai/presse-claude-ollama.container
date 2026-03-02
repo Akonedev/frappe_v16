@@ -1,0 +1,42 @@
+# Tier 4 — AI: Ollama LLM Server
+# GPU AMD optionnel via AddDevice — CPU si commenté
+# Groupe 'ollama' requis : sudo usermod -aG ollama $USER
+
+[Unit]
+Description=Presse Claude — Ollama LLM Server
+After=network-online.target presse-claude-network.service
+Wants=network-online.target
+Requires=presse-claude-network.service
+
+[Container]
+Image=docker.io/ollama/ollama:latest
+ContainerName=presse_claude_ollama
+Label=com.docker.compose.project=presse_claude
+
+Network=presse-claude.network
+
+Volume=presse-claude-ollama-data.volume:/root/.ollama
+
+PublishPort=127.0.0.1:14080:11434
+
+Environment=OLLAMA_HOST=0.0.0.0
+Environment=OLLAMA_ORIGINS=*
+
+# ── GPU AMD (render/video/ollama groups confirmés OK) ────────────────────────
+AddDevice=/dev/dri/renderD128
+AddDevice=/dev/dri/renderD129
+Environment=HSA_OVERRIDE_GFX_VERSION=10.3.0
+
+HealthCmd=CMD ollama list
+HealthInterval=30s
+HealthTimeout=10s
+HealthRetries=3
+HealthStartPeriod=15s
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=120
+
+[Install]
+WantedBy=presse-claude-ai.target

@@ -1,0 +1,43 @@
+# Tier 2 — DevTools: Stalwart Mail
+# SMTP/IMAP/HTTP self-hosted pour Frappe Press
+
+[Unit]
+Description=Presse Claude — Stalwart Mail Server
+After=network-online.target presse-claude-network.service
+Wants=network-online.target
+Requires=presse-claude-network.service
+
+[Container]
+Image=docker.io/stalwartlabs/stalwart:latest
+ContainerName=presse_claude_stalwart
+
+Network=presse-claude.network
+
+Volume=presse-claude-stalwart-data.volume:/opt/stalwart
+
+PublishPort=127.0.0.1:14060:25
+PublishPort=127.0.0.1:14061:993
+PublishPort=127.0.0.1:14062:8080
+
+Environment=TZ=Europe/Paris
+
+Label=traefik.enable=true
+Label=traefik.http.routers.stalwart.rule=Host(`mail.press.local`)
+Label=traefik.http.routers.stalwart.entrypoints=websecure
+Label=traefik.http.routers.stalwart.tls=true
+Label=traefik.http.services.stalwart.loadbalancer.server.port=8080
+Label=com.docker.compose.project=presse_claude
+
+HealthCmd=CMD-SHELL bash -c "echo > /dev/tcp/localhost/8080"
+HealthInterval=30s
+HealthTimeout=10s
+HealthRetries=3
+HealthStartPeriod=20s
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=60
+
+[Install]
+WantedBy=presse-claude-devtools.target

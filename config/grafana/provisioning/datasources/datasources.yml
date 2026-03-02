@@ -1,0 +1,21 @@
+# config/grafana/provisioning/datasources/datasources.yml
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://presse_claude_prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      timeInterval: "15s"
+
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://presse_claude_loki:3100
+    isDefault: false
+    editable: true
+    jsonData:
+      maxLines: 1000

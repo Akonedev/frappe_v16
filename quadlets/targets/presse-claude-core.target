@@ -1,0 +1,17 @@
+# Target Tier 0 — Core Infrastructure
+# Groupe: Traefik + MariaDB + Redis (cache + queue)
+# Prérequis pour tous les autres tiers
+
+[Unit]
+Description=Presse Claude — Infrastructure Core (Tier 0)
+Wants=presse-claude-traefik.service \
+      presse-claude-mariadb.service \
+      presse-claude-redis-cache.service \
+      presse-claude-redis-queue.service
+After=presse-claude-traefik.service \
+      presse-claude-mariadb.service \
+      presse-claude-redis-cache.service \
+      presse-claude-redis-queue.service
+
+[Install]
+WantedBy=default.target

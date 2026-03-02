@@ -1,0 +1,35 @@
+# Tier 0 — Core: Redis cache
+# Cache partagé pour Press + sites Frappe
+
+[Unit]
+Description=Presse Claude — Redis 7 Cache
+After=network-online.target presse-claude-network.service
+Wants=network-online.target
+Requires=presse-claude-network.service
+
+[Container]
+Image=docker.io/library/redis:7-alpine
+ContainerName=presse_claude_redis_cache
+Label=com.docker.compose.project=presse_claude
+
+Network=presse-claude.network
+
+Volume=presse-claude-redis-cache-data.volume:/data
+
+# Exposé sur loopback pour debug
+PublishPort=127.0.0.1:14031:6379
+
+HealthCmd=CMD redis-cli ping
+HealthInterval=10s
+HealthTimeout=3s
+HealthRetries=5
+
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+RestartSec=5
+TimeoutStartSec=30
+
+[Install]
+WantedBy=presse-claude-core.target

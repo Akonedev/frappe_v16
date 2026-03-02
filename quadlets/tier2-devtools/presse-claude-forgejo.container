@@ -1,0 +1,57 @@
+# Tier 2 — DevTools: Forgejo v9 Git Server
+# Miroirs des apps Frappe — sources pour Press App Sources
+
+[Unit]
+Description=Presse Claude — Forgejo v9 Git Server
+After=network-online.target presse-claude-network.service
+Wants=network-online.target
+Requires=presse-claude-network.service
+
+[Container]
+Image=codeberg.org/forgejo/forgejo:9
+ContainerName=presse_claude_forgejo
+
+Network=presse-claude.network
+
+Volume=presse-claude-forgejo-data.volume:/data
+Volume=presse-claude-forgejo-repos.volume:/data/git/repositories
+
+PublishPort=127.0.0.1:14050:3000
+PublishPort=127.0.0.1:14051:2222
+
+EnvironmentFile=%h/Documents/Dev/01_Enccours/Presse_claude/.env
+Environment=USER_UID=1000
+Environment=USER_GID=1000
+Environment=FORGEJO__database__DB_TYPE=sqlite3
+Environment=FORGEJO__database__PATH=/data/gitea/forgejo.db
+Environment=FORGEJO__server__DOMAIN=git.press.local
+Environment=FORGEJO__server__ROOT_URL=https://git.press.local/
+Environment=FORGEJO__server__SSH_PORT=14051
+Environment=FORGEJO__server__SSH_LISTEN_PORT=2222
+Environment=FORGEJO__server__START_SSH_SERVER=true
+Environment=FORGEJO__security__INSTALL_LOCK=true
+Environment=FORGEJO__service__DISABLE_REGISTRATION=true
+Environment=FORGEJO__log__LEVEL=warn
+Environment=FORGEJO__metrics__ENABLED=true
+Environment=FORGEJO__metrics__TOKEN=dd2cb00012135c8c868ad77fc921810970ba1431
+
+Label=traefik.enable=true
+Label=traefik.http.routers.forgejo.rule=Host(`git.press.local`)
+Label=traefik.http.routers.forgejo.entrypoints=websecure
+Label=traefik.http.routers.forgejo.tls=true
+Label=traefik.http.services.forgejo.loadbalancer.server.port=3000
+Label=com.docker.compose.project=presse_claude
+
+HealthCmd=CMD curl -f http://localhost:3000/api/healthz
+HealthInterval=15s
+HealthTimeout=10s
+HealthRetries=5
+HealthStartPeriod=30s
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=90
+
+[Install]
+WantedBy=presse-claude-devtools.target

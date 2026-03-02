@@ -1,0 +1,5 @@
+[Unit]
+Description=Presse Claude — Server benches répertoire Frappe
+
+[Volume]
+VolumeName=presse_claude_server_benches

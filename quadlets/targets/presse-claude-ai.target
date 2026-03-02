@@ -1,0 +1,12 @@
+# Target Tier 4 — AI Stack
+# Groupe: Ollama + Open WebUI
+# Profil "gpu" : tous les tiers + IA locale
+# Peut tourner seul (indépendant des autres tiers)
+
+[Unit]
+Description=Presse Claude — AI Stack (Tier 4)
+Wants=presse-claude-ollama.service \
+      presse-claude-openwebui.service
+
+[Install]
+WantedBy=default.target

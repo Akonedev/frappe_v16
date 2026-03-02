@@ -1,0 +1,12 @@
+# config/grafana/provisioning/dashboards/dashboards.yml
+apiVersion: 1
+
+providers:
+  - name: "presse-claude"
+    orgId: 1
+    folder: "Presse Claude"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards

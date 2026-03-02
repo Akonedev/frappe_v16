@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 source "${PROJECT_DIR}/.env"
 
-BENCH="docker exec ${PREFIX}press bench"
+BENCH="podman exec ${PREFIX}press bench"
 SITE="${PRESS_SITE_NAME}"
 
 echo "=== Configuration Press Settings ==="
@@ -16,7 +16,7 @@ echo "=== Configuration Press Settings ==="
 # Vérifier que Press est prêt
 echo "→ Vérification que Press est prêt..."
 for i in {1..20}; do
-  if docker exec "${PREFIX}press" curl -sf http://localhost:8000/api/method/frappe.ping >/dev/null 2>&1; then
+  if podman exec "${PREFIX}press" curl -sf http://localhost:8000/api/method/frappe.ping >/dev/null 2>&1; then
     echo "  Press prêt."
     break
   fi
@@ -25,7 +25,7 @@ for i in {1..20}; do
 done
 
 # Configurer Press Settings via frappe execute
-docker exec "${PREFIX}press" bash -c "
+podman exec "${PREFIX}press" bash -c "
 cd /home/frappe/frappe-bench
 bench --site ${SITE} execute press.press.doctype.press_settings.press_settings.setup_config << 'PYEOF'
 import frappe
