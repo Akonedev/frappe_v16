@@ -17,16 +17,16 @@ declare -A APPS_GITHUB=(
     ["frappe"]="https://github.com/frappe/frappe version-16 frappe"
     ["erpnext"]="https://github.com/frappe/erpnext version-16 frappe"
     ["hrms"]="https://github.com/frappe/hrms version-16 frappe"
-    ["crm"]="https://github.com/frappe/crm version-1 frappe"
+    ["crm"]="https://github.com/frappe/crm main frappe"
     ["helpdesk"]="https://github.com/frappe/helpdesk main frappe"
     ["lms"]="https://github.com/frappe/lms main frappe"
     ["insights"]="https://github.com/frappe/insights version-3 frappe"
-    ["wiki"]="https://github.com/frappe/wiki version-2 frappe"
+    ["wiki"]="https://github.com/frappe/wiki develop frappe"
     ["drive"]="https://github.com/frappe/drive main frappe"
     ["gameplan"]="https://github.com/frappe/gameplan main frappe"
-    ["builder"]="https://github.com/frappe/builder main frappe"
-    ["print_designer"]="https://github.com/frappe/print_designer version-1 frappe"
-    ["payments"]="https://github.com/frappe/payments main frappe"
+    ["builder"]="https://github.com/frappe/builder develop frappe"
+    ["print_designer"]="https://github.com/frappe/print_designer main frappe"
+    ["payments"]="https://github.com/frappe/payments develop frappe"
     ["raven"]="https://github.com/The-Commit-Company/raven main The-Commit-Company"
     ["mail"]="https://github.com/frappe/mail develop frappe"
     # Phase 4 — Apps sectorielles
@@ -60,11 +60,20 @@ sync_app() {
     local app_dir="$WORK_DIR/$app_name"
     local forgejo_url="http://${FORGEJO_USER}:${FORGEJO_PASS}@localhost:${PORT_FORGEJO_HTTP:-14050}/${org}/${app_name}.git"
     
+    # Créer repo dans Forgejo via API si absent
+    local api_base="http://localhost:${PORT_FORGEJO_HTTP:-14050}/api/v1"
+    local exists=$(curl -s -u "${FORGEJO_USER}:${FORGEJO_PASS}"         "${api_base}/repos/${org}/${app_name}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('name',''))" 2>/dev/null)
+    if [ -z "$exists" ]; then
+        curl -s -X POST "${api_base}/orgs/${org}/repos"             -u "${FORGEJO_USER}:${FORGEJO_PASS}"             -H "Content-Type: application/json"             -d "{\"name\":\"${app_name}\",\"private\":false,\"auto_init\":false}" > /dev/null 2>&1
+    fi
+
     # Clone sparse from GitHub (only the target branch)
     if git clone --depth=1 --branch "$branch" --single-branch "$github_url" "$app_dir" 2>/dev/null; then
         (
             cd "$app_dir"
             git remote add forgejo "$forgejo_url"
+            # Unshallow the clone (Forgejo rejects shallow pushes)
+            git fetch --unshallow 2>/dev/null || true
             # Push to Forgejo
             if git push forgejo HEAD:refs/heads/"$branch" --force 2>/dev/null; then
                 echo "✓ $app_name pushed to Forgejo (branch: $branch)"

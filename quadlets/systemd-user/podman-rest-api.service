@@ -1,0 +1,23 @@
+# ~/.config/systemd/user/podman-rest-api.service
+# Podman REST API — socket permanent pour Traefik Docker provider
+# Sans ce service, podman.sock peut disparaître → Traefik perd la découverte Docker
+#
+# Installation: make podman-rest-api
+# Ou manuellement:
+#   cp quadlets/systemd-user/podman-rest-api.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now podman-rest-api.service
+
+[Unit]
+Description=Podman REST API — Socket permanent pour Traefik
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/podman system service --time=0
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

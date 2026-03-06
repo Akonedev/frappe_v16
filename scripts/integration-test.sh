@@ -71,7 +71,7 @@ PRESS_ADMIN_PASS="${PRESS_ADMIN_PASSWORD:-presse_admin_2024}"
 FORGEJO_USER="${FORGEJO_ADMIN_USER:-gitadmin}"
 FORGEJO_PASS="${FORGEJO_ADMIN_PASSWORD:-presse_admin_2024}"
 GRAFANA_USER="admin"
-GRAFANA_PASS="${MARIADB_ROOT_PASSWORD:-change_me_root_password_here}"
+GRAFANA_PASS="${GRAFANA_ADMIN_PASSWORD:-grafana_admin_2024}"
 
 # ─── Compteurs ────────────────────────────────────────────────────────────────
 TESTS_TOTAL=0

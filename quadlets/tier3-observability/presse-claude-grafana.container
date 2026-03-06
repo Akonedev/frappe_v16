@@ -20,7 +20,7 @@ PublishPort=127.0.0.1:14071:3000
 
 EnvironmentFile=%h/Documents/Dev/01_Enccours/Presse_claude/.env
 Environment=GF_SECURITY_ADMIN_USER=admin
-Environment=GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-grafana_admin_2024}
+Environment=GF_SECURITY_ADMIN_PASSWORD=grafana_admin_2024
 Environment=GF_SERVER_ROOT_URL=https://monitor.press.local
 Environment=GF_SERVER_SERVE_FROM_SUB_PATH=false
 Environment=GF_ANALYTICS_REPORTING_ENABLED=false

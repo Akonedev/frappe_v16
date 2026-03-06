@@ -8,13 +8,14 @@ Wants=network-online.target
 Requires=presse-claude-network.service
 
 [Container]
-Image=docker.io/prom/prometheus:latest
+Image=docker.io/prom/prometheus:v2.52.0
 ContainerName=presse_claude_prometheus
 Label=com.docker.compose.project=presse_claude
 
 Network=presse-claude.network
 
 Volume=%h/Documents/Dev/01_Enccours/Presse_claude/config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+Volume=%h/Documents/Dev/01_Enccours/Presse_claude/config/prometheus/forgejo_token.txt:/etc/prometheus/forgejo_token.txt:ro
 Volume=presse-claude-prometheus-data.volume:/prometheus
 
 PublishPort=127.0.0.1:14070:9090

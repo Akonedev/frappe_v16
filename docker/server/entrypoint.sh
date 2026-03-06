@@ -117,7 +117,7 @@ if [ -f "${GUNICORN_BIN}" ]; then
 fi
 
 # ── Patcher _reload_nginx pour compatibilité Docker ───────────────────────────
-python3 - <<'PYEOF'
+python3 - <<'PYEOF' || echo "==> WARN: patch _reload_nginx échoué (non bloquant)"
 import glob, sys
 server_file = next(iter(glob.glob('/home/frappe/.venv/lib/python*/site-packages/agent/server.py')), None)
 if not server_file:
@@ -150,7 +150,6 @@ if old in content:
 else:
     print("==> AVERTISSEMENT: _reload_nginx non patché (version agent différente?)")
 PYEOF
-|| echo "==> WARN: patch _reload_nginx échoué (non bloquant)"
 
 # ── Corriger les permissions SQLite de l'agent ────────────────────────────────
 mkdir -p "${AGENT_DIR}"

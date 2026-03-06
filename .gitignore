@@ -15,3 +15,9 @@ config/garage/garage.toml.backup
 
 # Credentials exporters (générés automatiquement, contiennent des passwords)
 config/mysqld-exporter/.my.cnf
+
+# Tokens secrets générés localement
+config/prometheus/forgejo_token.txt
+
+# Répertoire parasite (node_modules tiers)
+presse_claude_/
