@@ -27,6 +27,10 @@ RUN apt-get update -o Acquire::AllowInsecureRepositories=true && apt-get install
     python3-pip \
     python3-venv \
     python3-dev \
+    # Build deps for frappe Python packages (mysqlclient, etc.)
+    pkg-config \
+    libmariadb-dev \
+    libmariadb-dev-compat \
     # Node.js 24 setup (Frappe v16 requires Node >= 24)
     ca-certificates \
     gnupg \
