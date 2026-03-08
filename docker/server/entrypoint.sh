@@ -167,8 +167,71 @@ for ext in "-shm" "-wal"; do
 done
 echo "==> Permissions SQLite agent OK"
 
+# ── Upgrade Flask pour compatibilité Jinja2 3.x ───────────────────────────────
+# Flask 1.1.1 (dépendance frappe-agent) est incompatible avec Jinja2 3.x (escape supprimé)
+sudo -u frappe /home/frappe/.venv/bin/pip install --quiet "flask>=2.0" 2>/dev/null \
+  && echo "==> Flask >= 2.0 installé (compat Jinja2 3.x)" \
+  || echo "==> WARN: Flask upgrade échoué (non bloquant)"
+
+# ── Initialiser les tables SQLite de l'agent (peewee) ────────────────────────
+# Peewee n'initialise les tables qu'au 1er job si elles n'existent pas;
+# RQ worker échouera si les tables manquent → on les crée dès maintenant.
+cat > /tmp/agent_sqlite_init.py << 'PYEOF'
+import os, sys
+os.chdir('/home/frappe/agent')
+try:
+    from agent.job import agent_database, JobModel, StepModel, PatchLogModel
+    agent_database.connect()
+    agent_database.create_tables([JobModel, StepModel, PatchLogModel], safe=True)
+    agent_database.close()
+    print("==> Tables SQLite agent initialisées (JobModel, StepModel, PatchLogModel)")
+except Exception as e:
+    print(f"==> WARN: init SQLite tables: {e}", file=sys.stderr)
+PYEOF
+sudo -u frappe env HOME=/home/frappe /home/frappe/.venv/bin/python3 /tmp/agent_sqlite_init.py || true
+
+# ── Patcher agent bench.py: mode no_docker (bare-metal sans Docker Swarm) ────
+# L'agent utilise docker_execute() qui appelle Docker Swarm par défaut.
+# Avec no_docker:true dans config.json, on exécute les commandes directement via bash.
+python3 - << 'PYEOF' || echo "==> WARN: patch bench.py docker_execute échoué (non bloquant)"
+import glob, sys
+bench_file = next(iter(glob.glob('/home/frappe/.venv/lib/python*/site-packages/agent/bench.py')), None)
+if not bench_file:
+    print("==> bench.py non trouvé, skip patch")
+    sys.exit(0)
+with open(bench_file, 'r') as f:
+    content = f.read()
+if 'no_docker' in content:
+    print("==> bench.py déjà patché (no_docker mode)")
+    sys.exit(0)
+old = """        if subdir:
+            workdir = os.path.join(workdir, subdir)
+
+        as_root_flag"""
+new = """        if subdir:
+            workdir = os.path.join(workdir, subdir)
+
+        # Local bare-metal bench mode (no Docker Swarm)
+        if self.bench_config.get("no_docker"):
+            full_command = f"bash -c 'cd {workdir} && {command}'"
+            return self.execute(
+                full_command,
+                input=input,
+                non_zero_throw=non_zero_throw,
+            )
+
+        as_root_flag"""
+if old in content:
+    with open(bench_file, 'w') as f:
+        f.write(content.replace(old, new, 1))
+    print("==> Patch bench.py docker_execute appliqué (no_docker mode)")
+else:
+    print("==> AVERTISSEMENT: Pattern docker_execute non trouvé (version agent différente?)")
+PYEOF
+
 # ── Configurer frappe-agent (si pas déjà configuré) ──────────────────────────
 mkdir -p "${AGENT_DIR}"/{nginx,tls,logs}
+mkdir -p "${AGENT_DIR}"/nginx/{upstreams,sites,conf.d}
 chown -R frappe:frappe "${AGENT_DIR}"
 
 if [ ! -f "${AGENT_DIR}/config.json" ]; then
@@ -560,6 +623,28 @@ for BENCH_DIR in "${BENCHES_DIR}"/bench-*/; do
     BENCH_NAME=$(basename "${BENCH_DIR}")
     BENCH_GUNICORN="${BENCH_DIR}env/bin/gunicorn"
 
+    # Créer config.json si manquant (requis par l'agent pour no_docker mode)
+    if [ ! -f "${BENCH_DIR}config.json" ]; then
+      echo "==> Création config.json pour ${BENCH_NAME} (no_docker mode)..."
+      cat > "${BENCH_DIR}config.json" << 'CFGEOF'
+{
+    "web_port": 8001,
+    "socketio_port": 9001,
+    "http_timeout": 120,
+    "background_workers": 1,
+    "gunicorn_workers": 2,
+    "redis_cache": "redis://127.0.0.1:11000",
+    "redis_queue": "redis://127.0.0.1:11001",
+    "redis_socketio": "redis://127.0.0.1:11002",
+    "single_container": false,
+    "no_docker": true,
+    "docker_image": null
+}
+CFGEOF
+      chown frappe:frappe "${BENCH_DIR}config.json" 2>/dev/null || true
+      echo "==> config.json créé pour ${BENCH_NAME}"
+    fi
+
     if [ ! -x "${BENCH_GUNICORN}" ]; then
       echo "==> Gunicorn absent pour ${BENCH_NAME}, skip"
       continue
@@ -686,6 +771,26 @@ while true; do
     BENCH_NAME=$(basename "${BENCH_DIR}")
     BENCH_GUNICORN="${BENCH_DIR}env/bin/gunicorn"
     [ -x "${BENCH_GUNICORN}" ] || { CURRENT_PORT=$((CURRENT_PORT+1)); continue; }
+
+    # Créer config.json si un nouveau bench a été créé par l'agent (no_docker mode)
+    if [ ! -f "${BENCH_DIR}config.json" ]; then
+      cat > "${BENCH_DIR}config.json" << 'CFGEOF'
+{
+    "web_port": 8001,
+    "socketio_port": 9001,
+    "http_timeout": 120,
+    "background_workers": 1,
+    "gunicorn_workers": 2,
+    "redis_cache": "redis://127.0.0.1:11000",
+    "redis_queue": "redis://127.0.0.1:11001",
+    "redis_socketio": "redis://127.0.0.1:11002",
+    "single_container": false,
+    "no_docker": true,
+    "docker_image": null
+}
+CFGEOF
+      chown frappe:frappe "${BENCH_DIR}config.json" 2>/dev/null || true
+    fi
 
     # Redémarrer gunicorn si port non écouté
     if ! ss -tlnp 2>/dev/null | grep -q ":${CURRENT_PORT} "; then

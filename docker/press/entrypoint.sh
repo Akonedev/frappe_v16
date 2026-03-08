@@ -522,6 +522,72 @@ if [ -f "${FORGEJO_PATCH}" ] && [ -d "${PRESS_API_DIR}" ]; then
   echo "→ Patch forgejo.py appliqué dans press/api/"
 fi
 
+# ── Patcher Press agent.py: mode HTTP local (sans TLS, sans préfixe /agent/) ──
+# Press construit les URL agent avec https + port 443 + préfixe /agent/.
+# En mode local (local_agent_http=true dans site_config.json), on utilise
+# HTTP direct sur le container presse_claude_server:8000 sans préfixe.
+python3 - << 'PYEOF' || echo "==> WARN: patch agent.py échoué (non bloquant)"
+import sys
+agent_file = '/home/frappe/frappe-bench/apps/press/press/agent.py'
+try:
+    with open(agent_file) as f:
+        content = f.read()
+except FileNotFoundError:
+    print("==> agent.py non trouvé, skip patch")
+    sys.exit(0)
+if 'local_agent_http' in content:
+    print("==> agent.py déjà patché (local_agent_http mode)")
+    sys.exit(0)
+
+# Patch 1: _make_req — remplace url+intermediate_ca+verify par bloc conditionnel
+old_make = (
+    '\t\turl = f"https://{self.server}:{self.port}/agent/{path}"\n'
+    '\t\tintermediate_ca = frappe.db.get_value("Press Settings", "Press Settings", "backbone_intermediate_ca")\n'
+    '\t\tif frappe.conf.developer_mode and intermediate_ca:\n'
+    '\t\t\troot_ca = frappe.db.get_value("Certificate Authority", intermediate_ca, "parent_authority")\n'
+    '\t\t\tverify = frappe.get_doc("Certificate Authority", root_ca).certificate_file\n'
+    '\t\telse:\n'
+    '\t\t\tverify = True'
+)
+new_make = (
+    '\t\tif getattr(frappe.conf, "local_agent_http", False):\n'
+    '\t\t\tserver_host = frappe.db.get_value(self.server_type, self.server, "ip") or self.server\n'
+    '\t\t\turl = f"http://{server_host}:8000/{path}"\n'
+    '\t\t\tverify = False\n'
+    '\t\telse:\n'
+    '\t\t\turl = f"https://{self.server}:{self.port}/agent/{path}"\n'
+    '\t\t\tintermediate_ca = frappe.db.get_value("Press Settings", "Press Settings", "backbone_intermediate_ca")\n'
+    '\t\t\tif frappe.conf.developer_mode and intermediate_ca:\n'
+    '\t\t\t\troot_ca = frappe.db.get_value("Certificate Authority", intermediate_ca, "parent_authority")\n'
+    '\t\t\t\tverify = frappe.get_doc("Certificate Authority", root_ca).certificate_file\n'
+    '\t\t\telse:\n'
+    '\t\t\t\tverify = True'
+)
+if old_make not in content:
+    print("==> WARN: Pattern _make_req non trouvé dans agent.py (version différente?)")
+    sys.exit(1)
+content = content.replace(old_make, new_make, 1)
+
+# Patch 2: raw_request — remplace url seule par bloc conditionnel
+old_raw = '\t\turl = f"https://{self.server}:{self.port}/agent/{path}"\n'
+new_raw = (
+    '\t\tif getattr(frappe.conf, "local_agent_http", False):\n'
+    '\t\t\tserver_host = frappe.db.get_value(self.server_type, self.server, "ip") or self.server\n'
+    '\t\t\turl = f"http://{server_host}:8000/{path}"\n'
+    '\t\telse:\n'
+    '\t\t\turl = f"https://{self.server}:{self.port}/agent/{path}"\n'
+)
+if old_raw not in content:
+    print("==> WARN: Pattern raw_request non trouvé dans agent.py (déjà patché partiellement?)")
+else:
+    content = content.replace(old_raw, new_raw, 1)
+    print("==> raw_request patché")
+
+with open(agent_file, 'w') as f:
+    f.write(content)
+print("==> agent.py patché (_make_req + raw_request: HTTP local mode)")
+PYEOF
+
 # ── Démarrage des services ─────────────────────────────────────────────────────
 bench use "${SITE_NAME}" 2>/dev/null || true
 
