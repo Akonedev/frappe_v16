@@ -21,3 +21,6 @@ config/prometheus/forgejo_token.txt
 
 # Répertoire parasite (node_modules tiers)
 presse_claude_/
+
+# Sources apps Frappe (clonées localement depuis Forgejo — non versionnées)
+apps/sources/
