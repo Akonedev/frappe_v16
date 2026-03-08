@@ -190,6 +190,49 @@ except Exception as e:
 PYEOF
 sudo -u frappe env HOME=/home/frappe /home/frappe/.venv/bin/python3 /tmp/agent_sqlite_init.py || true
 
+# ── Patcher agent callbacks.py: envoyer X-Forwarded-For avec le nom du server ─
+# Press valide les callbacks par IP (HTTP_X_FORWARDED_FOR), mais :
+# 1. L'agent appelle Press directement → header absent → KeyError
+# 2. tabServer.ip stocke le nom du container, pas l'IP
+# Fix: envoyer X-Forwarded-For: {server_name} (correspond à tabServer.ip)
+python3 - << 'PYEOF' || echo "==> WARN: patch agent callbacks.py échoué (non bloquant)"
+import glob, sys
+cb_file = next(iter(glob.glob('/home/frappe/.venv/lib/python*/site-packages/agent/callbacks.py')), None)
+if not cb_file:
+    print("==> callbacks.py non trouvé, skip patch")
+    sys.exit(0)
+with open(cb_file, 'r') as f:
+    content = f.read()
+if 'X-Forwarded-For' in content:
+    print("==> callbacks.py déjà patché (X-Forwarded-For)")
+    sys.exit(0)
+old = '''def callback(job, connection, result, *args, **kwargs):
+    from agent.server import Server
+
+    press_url = Server().press_url
+    requests.post(url=f"{press_url}/api/method/press.api.callbacks.callback", data={"job_id": job.id})'''
+new = '''def callback(job, connection, result, *args, **kwargs):
+    from agent.server import Server
+
+    server = Server()
+    press_url = server.press_url
+    # Send server name as X-Forwarded-For so Press can identify this server
+    # (tabServer.ip stores the container hostname, not an IP)
+    server_name = server.config.get("name", "")
+    headers = {"X-Forwarded-For": server_name} if server_name else {}
+    requests.post(
+        url=f"{press_url}/api/method/press.api.callbacks.callback",
+        data={"job_id": job.id},
+        headers=headers,
+    )'''
+if old in content:
+    with open(cb_file, 'w') as f:
+        f.write(content.replace(old, new, 1))
+    print("==> Patch callbacks.py appliqué (X-Forwarded-For: server_name)")
+else:
+    print("==> AVERTISSEMENT: Pattern callbacks.py non trouvé (version agent différente?)")
+PYEOF
+
 # ── Patcher agent bench.py: mode no_docker (bare-metal sans Docker Swarm) ────
 # L'agent utilise docker_execute() qui appelle Docker Swarm par défaut.
 # Avec no_docker:true dans config.json, on exécute les commandes directement via bash.

@@ -522,6 +522,78 @@ if [ -f "${FORGEJO_PATCH}" ] && [ -d "${PRESS_API_DIR}" ]; then
   echo "→ Patch forgejo.py appliqué dans press/api/"
 fi
 
+# ── Patcher Press callbacks.py: validation serveur robuste (hostname + REMOTE_ADDR) ─
+# Le callback d'agent échoue car :
+# 1. HTTP_X_FORWARDED_FOR absent quand l'agent appelle Press directement
+# 2. validate_server_request ne gère que les IPs, pas les hostnames
+# Fix: fallback REMOTE_ADDR + lookup par hostname (tabServer.ip = container name)
+python3 - << 'PYEOF' || echo "==> WARN: patch callbacks.py Press échoué (non bloquant)"
+import sys
+cb_file = '/home/frappe/frappe-bench/apps/press/press/api/callbacks.py'
+try:
+    with open(cb_file) as f:
+        content = f.read()
+except FileNotFoundError:
+    print("==> callbacks.py non trouvé, skip patch")
+    sys.exit(0)
+if 'REMOTE_ADDR' in content:
+    print("==> callbacks.py Press déjà patché (REMOTE_ADDR fallback)")
+    sys.exit(0)
+
+# Patch 1: validate_server_request — ajouter fallback non-IP (hostname dans ip field)
+old_validate = '''def validate_server_request(remote_addr: str):
+\tversion = check_ip_version(remote_addr)
+
+\tif version == 4:
+\t\tserver = frappe.get_value("Server", {"ip": remote_addr})
+\telif version == 6:
+\t\t# Added this here, however fc does not support ipv6
+\t\tremote_addr = f"{remote_addr.split('::')[0]}::"
+\t\tserver = frappe.get_value("Server", {"ip": remote_addr})
+\telse:
+\t\tserver = None
+
+\treturn server'''
+new_validate = '''def validate_server_request(remote_addr: str):
+\tversion = check_ip_version(remote_addr)
+
+\tif version == 4:
+\t\tserver = frappe.get_value("Server", {"ip": remote_addr})
+\telif version == 6:
+\t\t# Added this here, however fc does not support ipv6
+\t\tremote_addr = f"{remote_addr.split('::')[0]}::"
+\t\tserver = frappe.get_value("Server", {"ip": remote_addr})
+\telse:
+\t\t# Not an IP — try direct lookup (local dev: tabServer.ip stores container hostname)
+\t\tserver = frappe.get_value("Server", {"ip": remote_addr})
+
+\treturn server'''
+
+# Patch 2: callback — utiliser REMOTE_ADDR si HTTP_X_FORWARDED_FOR absent
+old_addr = '\tremote_addr = frappe.request.environ["HTTP_X_FORWARDED_FOR"]'
+new_addr = '\tremote_addr = (frappe.request.environ.get("HTTP_X_FORWARDED_FOR") or\n\t\t\t\t\tfrappe.request.environ.get("REMOTE_ADDR", ""))'
+
+patched = 0
+if old_validate in content:
+    content = content.replace(old_validate, new_validate, 1)
+    patched += 1
+    print("==> validate_server_request patché (hostname fallback)")
+else:
+    print("==> WARN: Pattern validate_server_request non trouvé")
+
+if old_addr in content:
+    content = content.replace(old_addr, new_addr, 1)
+    patched += 1
+    print("==> callback remote_addr patché (REMOTE_ADDR fallback)")
+else:
+    print("==> WARN: Pattern remote_addr non trouvé")
+
+if patched > 0:
+    with open(cb_file, 'w') as f:
+        f.write(content)
+    print(f"==> callbacks.py Press patché ({patched} changements)")
+PYEOF
+
 # ── Patcher Press agent.py: mode HTTP local (sans TLS, sans préfixe /agent/) ──
 # Press construit les URL agent avec https + port 443 + préfixe /agent/.
 # En mode local (local_agent_http=true dans site_config.json), on utilise
