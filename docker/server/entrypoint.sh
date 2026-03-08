@@ -251,123 +251,304 @@ echo "==> RQ worker PID: ${RQ_PID} (logs: /tmp/rq-worker.log)"
 cd /
 
 # ── Patcher frappe socket.io pour Docker (utils.js + authenticate.js) ────────
-# Problème : en developer_mode, get_url() construit une URL externe inaccessible.
-# Fix : utiliser http://127.0.0.1:8001 (gunicorn interne) avec node:http.request
-# qui permet d'override le Host header (contrairement à fetch/undici).
-for bench_dir in "${BENCHES_DIR}"/bench-*/; do
-  FRAPPE_REALTIME="${bench_dir}apps/frappe/realtime"
-  if [ ! -d "${FRAPPE_REALTIME}" ]; then continue; fi
+# Écrit directement les fichiers corrigés (pas de pattern matching fragile).
+# Appelé aussi dans la boucle watchdog pour les benches créés après démarrage.
 
-  # Patch utils.js : utiliser gunicorn interne
-  python3 - "${FRAPPE_REALTIME}/utils.js" <<'PYEOF'
-import sys
-path = sys.argv[1]
-with open(path) as f:
-    content = f.read()
-if '127.0.0.1' in content:
-    print(f"==> {path} déjà patché")
-    sys.exit(0)
-new_content = '''const { get_conf } = require("../node_utils");
+patch_frappe_realtime() {
+  local bench_dir="$1"
+  local FRAPPE_REALTIME="${bench_dir}apps/frappe/realtime"
+  [ -d "${FRAPPE_REALTIME}" ] || return 0
+
+  # utils.js : appel gunicorn interne (Host défini dans authenticate.js)
+  cat > "${FRAPPE_REALTIME}/utils.js" << 'UTILS_EOF'
+const { get_conf } = require("../node_utils");
 const conf = get_conf();
 
-// Patch Docker: socket.io calls gunicorn directly on localhost:8001.
-// get_url returns internal URL; authenticate.js uses node:http.request to set Host header.
 function get_url(socket, path) {
-\tif (!path) path = "";
-\treturn "http://127.0.0.1:8001" + path;
+	if (!path) path = "";
+	// Docker: appel interne gunicorn — Host header défini dans authenticate.js
+	return "http://127.0.0.1:8001" + path;
 }
 
 module.exports = { get_url };
-'''
-with open(path, 'w') as f:
-    f.write(new_content)
-print(f"==> {path} patché (Docker: gunicorn interne)")
-PYEOF
+UTILS_EOF
+  echo "==> ${FRAPPE_REALTIME}/utils.js patché"
 
-  # Patch authenticate.js : utiliser node:http.request avec Host header
-  python3 - "${FRAPPE_REALTIME}/middlewares/authenticate.js" <<'PYEOF'
-import sys
-path = sys.argv[1]
+  # authenticate.js : origin check robuste + node:http.request avec Host header
+  cat > "${FRAPPE_REALTIME}/middlewares/authenticate.js" << 'AUTH_EOF'
+const cookie = require("cookie");
+const http = require("node:http");
+const { get_conf, get_redis_subscriber } = require("../../node_utils");
+const { get_url } = require("../utils");
+const conf = get_conf();
+const redisClient = get_redis_subscriber("redis_queue");
+
+async function getSecretFromRedis() {
+	if (!redisClient.isOpen) await redisClient.connect();
+	const val = await redisClient.get("socketio_auth_secret");
+	return val;
+}
+
+function authenticate_with_frappe(socket, next) {
+	let namespace = socket.nsp.name;
+	namespace = namespace.slice(1, namespace.length);
+
+	if (namespace != get_site_name(socket)) {
+		next(new Error("Invalid namespace"));
+	}
+
+	// Origin check — skip quand x-frappe-site-name est présent (proxy Traefik/nginx) ou origin absent
+	const _origin = socket.request.headers.origin;
+	if (_origin && !socket.request.headers["x-frappe-site-name"]) {
+		if (get_hostname(socket.request.headers.host) !== get_hostname(_origin)) {
+			next(new Error("Invalid origin"));
+			return;
+		}
+	}
+
+	if (!socket.request.headers.cookie && !socket.request.headers.authorization) {
+		next(new Error("Missing cookie and authorization header. Either one needed for authentication."));
+		return;
+	}
+
+	let cookies = cookie.parse(socket.request.headers.cookie || "");
+	let authorization_header = socket.request.headers.authorization;
+
+	if (!cookies.sid && !authorization_header) {
+		next(new Error("No authentication method used. Use cookie or authorization header."));
+		return;
+	}
+	socket.sid = cookies.sid;
+	socket.authorization_header = authorization_header;
+
+	socket.frappe_request = async (path, args = {}, opts = {}) => {
+		let query_args = new URLSearchParams(args);
+		if (query_args.toString()) {
+			path = path + "?" + query_args.toString();
+		}
+
+		// node:http.request permet de définir Host header (fetch/undici l'interdit)
+		let headers = {
+			"Host": get_site_name(socket),
+		};
+		if (socket.authorization_header) {
+			headers["Authorization"] = socket.authorization_header;
+		} else if (socket.sid) {
+			headers["Cookie"] = "sid=" + socket.sid;
+		}
+		const secret = await getSecretFromRedis();
+		if (secret) {
+			headers["X-Frappe-Socket-Secret"] = secret;
+		}
+
+		const url = get_url(socket, path);
+		return new Promise((resolve, reject) => {
+			const req = http.request(url, { headers: headers, method: opts.method || "GET" }, (res) => {
+				let data = "";
+				res.on("data", (chunk) => (data += chunk));
+				res.on("end", () => {
+					resolve({
+						json: () => {
+							try { return Promise.resolve(JSON.parse(data)); }
+							catch (e) { return Promise.reject(new SyntaxError("Not valid JSON: " + data.substring(0, 80))); }
+						},
+						status: res.statusCode,
+						ok: res.statusCode >= 200 && res.statusCode < 300,
+					});
+				});
+			});
+			req.on("error", reject);
+			req.end();
+		});
+	};
+
+	socket
+		.frappe_request("/api/method/frappe.realtime.get_user_info")
+		.then((res) => res.json())
+		.then(async ({ message }) => {
+			if (socket.user !== "Guest" && !message.installed_apps) {
+				const retry_res = await socket.frappe_request("/api/method/frappe.realtime.get_user_info");
+				const retry_data = await retry_res.json();
+				message = retry_data.message;
+			}
+			socket.user = message.user;
+			socket.user_type = message.user_type;
+			socket.installed_apps = message.installed_apps || [];
+			next();
+		})
+		.catch((e) => {
+			next(new Error("Unauthorized: " + e));
+		});
+}
+
+function get_site_name(socket) {
+	if (socket.site_name) {
+		return socket.site_name;
+	} else if (socket.request.headers["x-frappe-site-name"]) {
+		socket.site_name = get_hostname(socket.request.headers["x-frappe-site-name"]);
+	} else if (conf.default_site && ["localhost", "127.0.0.1"].indexOf(get_hostname(socket.request.headers.host)) !== -1) {
+		socket.site_name = conf.default_site;
+	} else if (socket.request.headers.origin) {
+		socket.site_name = get_hostname(socket.request.headers.origin);
+	} else {
+		socket.site_name = get_hostname(socket.request.headers.host);
+	}
+	return socket.site_name;
+}
+
+function get_hostname(url) {
+	if (!url) return undefined;
+	if (url.indexOf("://") > -1) {
+		url = url.split("/")[2];
+	}
+	return url.match(/:/g) ? url.slice(0, url.indexOf(":")) : url;
+}
+
+module.exports = authenticate_with_frappe;
+AUTH_EOF
+  echo "==> ${FRAPPE_REALTIME}/middlewares/authenticate.js patché"
+}
+
+# Appliquer les patches sur tous les benches existants
+for bench_dir in "${BENCHES_DIR}"/bench-*/; do
+  patch_frappe_realtime "${bench_dir}"
+done
+
+# ── Patcher les bundles Vue SPA (socket.io port/protocol) ───────────────────
+# Les apps frappe-ui (CRM, Drive, HRMS, Wiki, Gameplan, LMS, Insights, Helpdesk)
+# construisent l'URL socket.io avec port=socketio_port(9000) et protocol=http.
+# Derrière Traefik sur :14002 (HTTPS), cela échoue.
+# Fix: utiliser window.location.port et window.location.protocol.
+patch_vue_spa_socketio() {
+  local bench_dir="$1"
+  python3 - "$bench_dir" << 'PYEOF'
+import re, os, glob, sys
+
+bench_dir = sys.argv[1]
+bundle_patterns = [
+    f'{bench_dir}/apps/*/*/public/frontend/assets/index-*.js',
+    f'{bench_dir}/apps/*/public/raven/assets/index-*.js',
+    f'{bench_dir}/apps/*/public/desk/assets/index-*.js',
+    f'{bench_dir}/apps/*/*/public/frontend/assets/insights_v2-*.js',
+    f'{bench_dir}/apps/*/*/public/frontend/assets/main-*.js',
+]
+bundle_files = []
+for pattern in bundle_patterns:
+    bundle_files.extend(glob.glob(pattern))
+bundle_files = list(set(bundle_files))
+
+pat_protocol = re.compile(r'\$\{[a-zA-Z_$][a-zA-Z0-9_$]*\?"http":"https"\}://')
+pat_port = re.compile(r'window\.location\.port\?`:\$\{(?!window\.location\.port\b)([a-zA-Z_$][a-zA-Z0-9_$]*)\}`')
+# Raven frappe-react-sdk PD class: this.port=...c.port?`:${this.socket_port}`:""
+pat_raven = re.compile(r'(c\.port\?`:\$\{)(this\.socket_port)(`:"")')
+
+total = 0
+for path in bundle_files:
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        orig = content
+        content = pat_protocol.sub('${window.location.protocol}//', content)
+        content = pat_port.sub('window.location.port?`:${window.location.port}`', content)
+        content = pat_raven.sub(r'\g<1>window.location.port\g<3>', content)
+        if content != orig:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            total += 1
+            print(f'==> Patched {os.path.basename(path)}')
+    except Exception as e:
+        print(f'==> WARN: {path}: {e}')
+if total:
+    print(f'==> Vue SPA socket.io: {total} bundle(s) patchés')
+PYEOF
+}
+
+for bench_dir in "${BENCHES_DIR}"/bench-*/; do
+  [ -d "${bench_dir}" ] && patch_vue_spa_socketio "${bench_dir}"
+done
+
+patch_desktop_js() {
+  local bench_dir="$1"
+  python3 - "$bench_dir" << 'PYEOF'
+import os, sys
+bench_dir = sys.argv[1]
+path = os.path.join(bench_dir, 'apps/frappe/frappe/desk/page/desktop/desktop.js')
+if not os.path.exists(path):
+    sys.exit(0)
 with open(path) as f:
     content = f.read()
-if 'node:http' in content:
-    print(f"==> {path} déjà patché")
-    sys.exit(0)
-# Ajouter require http et remplacer fetch par http.request
+orig = content
+# Fix 1: call setup_edit_button() in make() so the button exists before context menu uses it
 content = content.replace(
-    'const cookie = require("cookie");',
-    'const cookie = require("cookie");\nconst http = require("node:http");'
+    '\t\tthis.setup_context_menu();\n\t\tif (this.edit_mode)',
+    '\t\tthis.setup_context_menu();\n\t\tthis.setup_edit_button();\n\t\tif (this.edit_mode)',
+    )
+# Fix 2: null-safe check in onClick in case button is absent (mobile / race)
+content = content.replace(
+    'me.$desktop_edit_button.hide();',
+    'me.$desktop_edit_button && me.$desktop_edit_button.hide();',
+    )
+# Fix 3: dynamic folder list — items getter (re-evaluated on each menu open)
+old_items = (
+    '\t\t\t\t\titems: me.folders.map((name) => {\n'
+    '\t\t\t\t\t\treturn {\n'
+    '\t\t\t\t\t\t\tlabel: name,\n'
+    '\t\t\t\t\t\t\tonClick: function () {\n'
+    '\t\t\t\t\t\t\t\tadd_icons_to_folder(this.label, [icon_data.label]);\n'
+    '\t\t\t\t\t\t\t},\n'
+    '\t\t\t\t\t\t};\n'
+    '\t\t\t\t\t}),'
 )
-old_headers = 'let headers = {};'
-new_headers_plus = '''let headers = {};
-\t\t// node:http.request permet d'override Host header (fetch/undici ne le permet pas)
-\t\theaders["Host"] = get_site_name(socket);'''
-content = content.replace(old_headers, new_headers_plus, 1)
-# Remplacer le bloc fetch par http.request
-old_fetch = '''\t\treturn fetch(get_url(socket, path), {
-\t\t\t...opts,
-\t\t\theaders,
-\t\t});'''
-new_http = '''\t\tconst url = get_url(socket, path);
-\t\treturn new Promise((resolve, reject) => {
-\t\t\tconst req = http.request(url, { headers, method: opts.method || "GET" }, (res) => {
-\t\t\t\tlet data = "";
-\t\t\t\tres.on("data", (chunk) => (data += chunk));
-\t\t\t\tres.on("end", () => {
-\t\t\t\t\tresolve({
-\t\t\t\t\t\tjson: () => {
-\t\t\t\t\t\t\ttry { return Promise.resolve(JSON.parse(data)); }
-\t\t\t\t\t\t\tcatch (e) { return Promise.reject(new SyntaxError("Not valid JSON: " + data.substring(0, 80))); }
-\t\t\t\t\t\t},
-\t\t\t\t\t\tstatus: res.statusCode,
-\t\t\t\t\t\tok: res.statusCode >= 200 && res.statusCode < 300,
-\t\t\t\t\t});
-\t\t\t\t});
-\t\t\t});
-\t\t\treq.on("error", reject);
-\t\t\treq.end();
-\t\t});'''
-content = content.replace(old_fetch, new_http)
-if 'node:http' in content and 'http.request' in content:
+new_items = (
+    '\t\t\t\t\tget items() {\n'
+    '\t\t\t\t\t\treturn me.folders.map((name) => {\n'
+    '\t\t\t\t\t\t\treturn {\n'
+    '\t\t\t\t\t\t\t\tlabel: name,\n'
+    '\t\t\t\t\t\t\t\tonClick: function () {\n'
+    '\t\t\t\t\t\t\t\t\tadd_icons_to_folder(this.label, [icon_data.label]);\n'
+    '\t\t\t\t\t\t\t\t},\n'
+    '\t\t\t\t\t\t\t};\n'
+    '\t\t\t\t\t\t});\n'
+    '\t\t\t\t\t},'
+)
+content = content.replace(old_items, new_items)
+# Fix 4: prepare() rebuilds folders after child_icons are populated (includes App+Folder types with children)
+old_prepare_end = (
+    '\t\tall_icons.forEach((icon) => {\n'
+    '\t\t\tif (icon.parent_icon && icon_map[icon.parent_icon]) {\n'
+    '\t\t\t\ticon_map[icon.parent_icon].child_icons.push(icon);\n'
+    '\t\t\t}\n\n'
+    '\t\t\tif (!icon.parent_icon || !icon_map[icon.parent_icon]) {\n'
+    '\t\t\t\tthis.apps_icons.push(icon);\n'
+    '\t\t\t}\n'
+    '\t\t});\n'
+    '\t}'
+)
+new_prepare_end = (
+    '\t\tall_icons.forEach((icon) => {\n'
+    '\t\t\tif (icon.parent_icon && icon_map[icon.parent_icon]) {\n'
+    '\t\t\t\ticon_map[icon.parent_icon].child_icons.push(icon);\n'
+    '\t\t\t}\n\n'
+    '\t\t\tif (!icon.parent_icon || !icon_map[icon.parent_icon]) {\n'
+    '\t\t\t\tthis.apps_icons.push(icon);\n'
+    '\t\t\t}\n'
+    '\t\t});\n'
+    '\t\t// Rebuild folders to include ALL container icons (Folder type + App types with children)\n'
+    '\t\tthis.folders = all_icons\n'
+    '\t\t\t.filter((icon) => icon.icon_type === "Folder" || icon.child_icons.length > 0)\n'
+    '\t\t\t.map((icon) => icon.label);\n'
+    '\t}'
+)
+content = content.replace(old_prepare_end, new_prepare_end)
+if content != orig:
     with open(path, 'w') as f:
         f.write(content)
-    print(f"==> {path} patché (Docker: node:http.request)")
-else:
-    print(f"==> AVERTISSEMENT: patch {path} incomplet (version frappe différente?)")
+    print(f'==> Patched desktop.js: 4 fixes (setup_edit_button + null-safe + dynamic getter + all folders)')
 PYEOF
+}
 
-  # Patch authenticate.js : skip origin check when Origin header is absent (WebSocket transport)
-  # Bug: get_hostname(undefined) returns undefined != hostname => Invalid origin
-  # Fix: only enforce origin check when Origin header is actually present
-  python3 - "${FRAPPE_REALTIME}/middlewares/authenticate.js" <<'PYEOF2'
-import sys
-path = sys.argv[1]
-with open(path) as f:
-    content = f.read()
-if 'const _origin = socket.request.headers.origin' in content:
-    print(f"==> {path} origin-fix deja applique")
-    sys.exit(0)
-old_check = (
-    "\tif (get_hostname(socket.request.headers.host) != get_hostname(socket.request.headers.origin)) {\n"
-    "\t\tnext(new Error(\"Invalid origin\"));\n"
-    "\t\treturn;\n"
-    "\t}"
-)
-new_check = (
-    "\tconst _origin = socket.request.headers.origin;\n"
-    "\tif (_origin !== undefined && get_hostname(socket.request.headers.host) != get_hostname(_origin)) {\n"
-    "\t\tnext(new Error(\"Invalid origin\"));\n"
-    "\t\treturn;\n"
-    "\t}"
-)
-if old_check in content:
-    content = content.replace(old_check, new_check)
-    with open(path, "w") as f:
-        f.write(content)
-    print(f"==> {path} patche (origin-fix: skip check when Origin absent)")
-else:
-    print(f"==> AVERTISSEMENT: origin-fix non applique (pattern non trouve dans {path})")
-PYEOF2
+for bench_dir in "${BENCHES_DIR}"/bench-*/; do
+  [ -d "${bench_dir}" ] && patch_desktop_js "${bench_dir}"
 done
 
 # ── Démarrer les gunicorn pour les benches existants ─────────────────────────
@@ -483,22 +664,63 @@ done
 
 # ── Maintenir le container en vie ─────────────────────────────────────────────
 echo "==> Tous les services démarrés. Container en cours d'exécution..."
+
 # Surveiller les processus critiques - redémarrer si mort
 while true; do
   sleep 30
-  # Vérifier gunicorn bench (port 8001)
-  if ! ss -tlnp 2>/dev/null | grep -q ':8001 '; then
-    echo "==> WARN: gunicorn bench mort - redémarrage..."
-    for BENCH_DIR in "${BENCHES_DIR}"/bench-*/; do
-      if [ -d "${BENCH_DIR}env" ]; then
-        BENCH_NAME=$(basename "${BENCH_DIR}")
-        BENCH_GUNICORN="${BENCH_DIR}env/bin/gunicorn"
-        [ -x "${BENCH_GUNICORN}" ] && sudo -u frappe env HOME="/home/frappe" \
-          "${BENCH_GUNICORN}" --bind "0.0.0.0:8001" --workers 2 \
-          --worker-class=gthread --threads=4 --timeout 120 \
-          --chdir "${BENCH_DIR}sites" frappe.app:application \
-          >> "/tmp/bench-${BENCH_NAME}.log" 2>&1 &
-      fi
-    done
+
+  # Vérifier l'agent frappe-agent (port 8000)
+  if ! ss -tlnp 2>/dev/null | grep -q ':8000 '; then
+    echo "==> WARN: frappe-agent mort - redémarrage..."
+    sudo -u frappe env HOME="/home/frappe" \
+      /home/frappe/.venv/bin/gunicorn \
+      --bind "0.0.0.0:${AGENT_PORT}" --workers 1 \
+      --chdir "${AGENT_DIR}" agent.web:application \
+      >> /tmp/frappe-agent.log 2>&1 &
   fi
+
+  # Vérifier et redémarrer tous les benches
+  CURRENT_PORT=8001
+  for BENCH_DIR in "${BENCHES_DIR}"/bench-*/; do
+    [ -d "${BENCH_DIR}env" ] || continue
+    BENCH_NAME=$(basename "${BENCH_DIR}")
+    BENCH_GUNICORN="${BENCH_DIR}env/bin/gunicorn"
+    [ -x "${BENCH_GUNICORN}" ] || { CURRENT_PORT=$((CURRENT_PORT+1)); continue; }
+
+    # Redémarrer gunicorn si port non écouté
+    if ! ss -tlnp 2>/dev/null | grep -q ":${CURRENT_PORT} "; then
+      echo "==> WARN: gunicorn ${BENCH_NAME} mort (port ${CURRENT_PORT}) - redémarrage..."
+      sudo -u frappe env HOME="/home/frappe" \
+        "${BENCH_GUNICORN}" \
+        --bind "0.0.0.0:${CURRENT_PORT}" \
+        --workers 2 --worker-class=gthread --threads=4 --timeout 120 \
+        --chdir "${BENCH_DIR}sites" frappe.app:application \
+        >> "/tmp/bench-${BENCH_NAME}.log" 2>&1 &
+    fi
+
+    # Redémarrer socket.io si absent
+    SOCKETIO_JS="${BENCH_DIR}apps/frappe/socketio.js"
+    if [ -f "${SOCKETIO_JS}" ] && ! pgrep -f "node.*socketio.js" > /dev/null 2>&1; then
+      echo "==> WARN: socket.io ${BENCH_NAME} mort - redémarrage..."
+      (
+        cd "${BENCH_DIR}apps/frappe"
+        sudo -u frappe env HOME="/home/frappe" node socketio.js \
+          >> "/tmp/socketio-${BENCH_NAME}.log" 2>&1
+      ) &
+    fi
+
+    # Redémarrer RQ workers si absents
+    REDIS_QUEUE_URL=$(python3 -c "import json; c=json.load(open('${BENCH_DIR}/sites/common_site_config.json')); print(c.get('redis_queue','redis://presse_claude_redis_queue:6379'))" 2>/dev/null || echo "redis://presse_claude_redis_queue:6379")
+    BENCH_WORKER_NAME=$(echo "${BENCH_DIR}" | sed 's|^/||;s|/|-|g')
+    BENCH_QUEUES="${BENCH_WORKER_NAME}:short ${BENCH_WORKER_NAME}:default ${BENCH_WORKER_NAME}:long"
+    if ! pgrep -f "rq.cli worker.*${BENCH_WORKER_NAME}" > /dev/null 2>&1; then
+      echo "==> WARN: RQ workers ${BENCH_NAME} morts - redémarrage..."
+      sudo -u frappe env HOME="/home/frappe" \
+        "${BENCH_DIR}/env/bin/python3" -m rq.cli worker \
+        --url "${REDIS_QUEUE_URL}" ${BENCH_QUEUES} \
+        >> "/tmp/rq-${BENCH_NAME}.log" 2>&1 &
+    fi
+
+    CURRENT_PORT=$((CURRENT_PORT + 1))
+  done
 done
