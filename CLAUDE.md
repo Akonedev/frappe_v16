@@ -201,8 +201,8 @@ Site Frappe de démonstration avec toutes les apps principales installées:
 - **URL**: `https://apps.press.local:14002/desk`
 - **Apps installées (15)**: frappe, payments, erpnext, hrms, crm, telephony, helpdesk, lms,
   drive, wiki, gameplan, builder, print_designer, raven, insights
-- **DB**: `_d3a079634a5614ed` sur presse_claude_mariadb
-- **Bench**: `bench-0001-000001-presse_claude_server`
+- **DB**: `_9060e882daee4b85` sur presse_claude_mariadb
+- **Bench**: `bench-0001`
 
 **DNS requis** (ajouter manuellement si `make dns` non exécuté):
 ```bash
@@ -213,12 +213,12 @@ echo '127.0.0.1 apps.press.local' | sudo tee -a /etc/hosts
 ```bash
 # Dans le server container:
 pkill -f 'gunicorn.*8001' || true
-BENCH=/home/frappe/benches/bench-0001-000001-presse_claude_server
+BENCH=/home/frappe/benches/bench-0001
 nohup sudo -u frappe env HOME=/home/frappe \
   $BENCH/env/bin/gunicorn \
   --bind 0.0.0.0:8001 --workers 2 --worker-class=gthread --threads=4 \
   --timeout 120 --chdir $BENCH/sites frappe.app:application \
-  >> /tmp/bench-bench-0001-000001-presse_claude_server.log 2>&1 &
+  >> /tmp/bench-bench-0001.log 2>&1 &
 ```
 
 ## TLS local (Task 27)

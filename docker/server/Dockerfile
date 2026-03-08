@@ -31,6 +31,9 @@ RUN apt-get update -o Acquire::AllowInsecureRepositories=true && apt-get install
     pkg-config \
     libmariadb-dev \
     libmariadb-dev-compat \
+    # libmagic for frappe/drive python-magic dependency
+    libmagic1 \
+    libmagic-dev \
     # Node.js 24 setup (Frappe v16 requires Node >= 24)
     ca-certificates \
     gnupg \
